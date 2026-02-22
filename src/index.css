@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.tile-rotated {
+    transform: rotate(-90deg);
+    transform-origin: center center;
+    transition: transform 0.2s ease;
+}

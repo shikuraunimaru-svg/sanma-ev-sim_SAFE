@@ -1,0 +1,14 @@
+/* Custom styles for effective tiles to force removal of shadows */
+.effective-tiles img {
+    box-shadow: none !important;
+    filter: none !important;
+}
+
+.effective-tiles .tile {
+    box-shadow: none !important;
+}
+
+.effective-tiles>div {
+    box-shadow: none !important;
+    background: transparent !important;
+}
