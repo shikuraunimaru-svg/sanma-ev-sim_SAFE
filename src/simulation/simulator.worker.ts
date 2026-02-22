@@ -195,14 +195,28 @@ function runBatchSimulations(
             [pathWall[j], pathWall[k]] = [pathWall[k], pathWall[j]];
         }
 
-        const liveWall = pathWall.slice(0, 54);
-        const deadWall = pathWall.slice(54, 54 + 14);
+        // 14枚を王牌 (末尾から取得)
+        const deadWall = pathWall.slice(-14);
+
+        // 残りを基本のライブ山として取得
+        let liveWall = pathWall.slice(0, -14);
+
+        // 他家配牌(26枚) + 経過巡目によるこれまでの追加ツモを消費
+        const additionalDraws = 3 * (config.currentTurn - 1);
+        const tilesToConsume = 26 + additionalDraws;
+
+        // 実際に消費した分をスライス（牌が足りない場合は空配列になる）
+        liveWall = liveWall.slice(tilesToConsume);
 
         if (stats.trials === 0 && action.type === 'discard' && action.tile === config.myHand[0]) {
-            console.log("liveWall initial:", liveWall.length);
+            console.log("LIVE", liveWall.length);
+            console.log("DEAD", deadWall.length);
         }
 
-        const result = runSinglePath(myHand, fixedMentsu, action, liveWall, deadWall, kitaCount, doraIndicators, currentTurn, isDealer);
+        // 1巡につき3枚（自分1＋他家2）が消費されるため、liveWallの残り枚数から実ツモ回数を算出
+        const remainingSelfDraws = Math.floor(liveWall.length / 3);
+
+        const result = runSinglePath(myHand, fixedMentsu, action, liveWall, deadWall, kitaCount, doraIndicators, currentTurn, isDealer, remainingSelfDraws);
 
         // Update Stats
         if (result.type === 'win') {
@@ -688,11 +702,26 @@ export function simulateAllDiscards(config: SimulationConfig): { results: Discar
         let fullWall = generateWall();
         fullWall = removeTilesFromWall(fullWall, visibleTiles);
 
-        const liveWall = fullWall.slice(0, 54);
-        const deadWall = fullWall.slice(54, 54 + 14);
+        // 14枚を王牌 (末尾から取得)
+        const deadWall = fullWall.slice(-14);
+
+        // 残りを基本のライブ山として取得
+        let liveWall = fullWall.slice(0, -14);
+
+        // 他家配牌(26枚) + 経過巡目によるこれまでの追加ツモを消費
+        const additionalDraws = 3 * (config.currentTurn - 1);
+        const tilesToConsume = 26 + additionalDraws;
+
+        // 実際に消費した分をスライス
+        liveWall = liveWall.slice(tilesToConsume);
+
+        console.log("LIVE", liveWall.length);
+        console.log("DEAD", deadWall.length);
 
         // Debug run
-        runSinglePath(config.myHand, config.fixedMentsu, bestResult.action, liveWall, deadWall, config.kitaCount, config.doraIndicators, config.currentTurn, config.isDealer);
+        // 1巡につき3枚（自分1＋他家2）が消費されるため、liveWallの残り枚数から実ツモ回数を算出
+        const remainingSelfDraws = Math.floor(liveWall.length / 3);
+        runSinglePath(config.myHand, config.fixedMentsu, bestResult.action, liveWall, deadWall, config.kitaCount, config.doraIndicators, config.currentTurn, config.isDealer, remainingSelfDraws);
     }
 
     return { results, csvReport };

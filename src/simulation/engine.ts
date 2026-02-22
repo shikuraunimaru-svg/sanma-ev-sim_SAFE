@@ -145,6 +145,7 @@ export function runSinglePath(
     doraIndicators: Tile[],
     currentTurn: number,
     isDealer: boolean,
+    remainingSelfDraws: number,
     debugLog: boolean = false
 ): SimulationPathResult {
     if (debugLog) {
@@ -163,6 +164,16 @@ export function runSinglePath(
     let isIppatsu = false;
     let isHaitei = false;
     let turnCount = 0;
+
+    // Guard: もし残りツモ回数が 0 以下の場合は、ツモ和了シミュレーションとしては成立しないため直ちに流局扱いとする
+    // これにより、Phase 1 の Tsumo アクションなどでも和了率が 0% になります
+    if (remainingSelfDraws <= 0) {
+        return {
+            type: 'draw',
+            point: 0,
+            isTenpai: calculateShanten(hand, fixedMentsu.length) <= 0
+        };
+    }
 
     // Deposit Adjustment
     let scoreAdjustment = 0;
@@ -493,27 +504,28 @@ export function runSinglePath(
 
     // NOTE: In 3-player mahjong, "Turn" usually means "My Turn".
     // Between my turns, 2 other players move.
-    // Simplifying: we allow "maxSimTurns" (e.g., 18) iterations of "Draw -> Discard".
+    // User requested to control loops entirely by `remainingSelfDraws` parameter
 
-    const maxSimTurns = Math.max(0, 18 - currentTurn);
-
-    while (currentLiveWall.length > 0 && turnCount < maxSimTurns) {
+    for (let i = 0; i < remainingSelfDraws; i++) {
         turnCount++;
+
+        // 1. Check if we can even draw before opponent turns
+        if (currentLiveWall.length === 0) break;
 
         if (debugLog) {
             console.log(`Turn: ${turnCount} Live: ${currentLiveWall.length}`);
         }
 
-        // 1. Draw
         // Simulate opponents drawing 2 tiles (consumption)
         // 3 players total. Me=1 tile. Opponents=2 tiles.
-        // Total consumption per "my number of turns" is 3 tiles.
-        // So we remove 2 extra tiles from live wall if available.
         if (currentLiveWall.length >= 2) {
             currentLiveWall.pop();
             currentLiveWall.pop();
+        } else if (currentLiveWall.length === 1) {
+            currentLiveWall.pop();
         }
 
+        // My Draw
         if (currentLiveWall.length === 0) break; // Exhausted before my draw
         const drawnTile = currentLiveWall.pop()!;
         hand.push(drawnTile);
