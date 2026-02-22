@@ -19,9 +19,7 @@ export default function App() {
   const [fixedMentsu, setFixedMentsu] = useState<Mentsu[]>([]);
   const [doraIndicators, setDoraIndicators] = useState<Tile[]>([]);
   const [kitaCount, setKitaCount] = useState(0);
-  const [trials, setTrials] = useState(5000);
   const [currentTurn, setCurrentTurn] = useState(1);
-  const [isDealer, setIsDealer] = useState(false);
   const [validationMode, setValidationMode] = useState(false);
   const [csvReport, setCsvReport] = useState<string | undefined>(undefined);
 
@@ -106,9 +104,9 @@ export default function App() {
       myDiscards: [], // TODO: Add input if needed
       doraIndicators,
       kitaCount,
-      trials,
+      trials: 5000,
       currentTurn,
-      isDealer,
+      isDealer: true,
       validationMode
     };
 
@@ -139,12 +137,8 @@ export default function App() {
           <Settings
             kitaCount={kitaCount}
             onKitaChange={(val) => setKitaCount(Math.min(val, maxKita))}
-            trials={trials}
-            onTrialsChange={setTrials}
             currentTurn={currentTurn}
             onTurnChange={setCurrentTurn}
-            isDealer={isDealer}
-            onDealerChange={setIsDealer}
             maxKita={maxKita}
             validationMode={validationMode}
             onValidationModeChange={setValidationMode}

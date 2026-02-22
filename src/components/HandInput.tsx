@@ -155,25 +155,17 @@ export function HandInput({
 
     // Render Helper
     const renderTileButton = (t: Tile) => {
-        const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat); // Also check red limit
-        // Optimization: IsRedLimitReached should only verify if 't' IS red. 
-        // If 't' is normal, it shouldn't be blocked by red usage unless we are out of normal tiles?
-        // Wait, 5p limit is 4. One of them is red.
-        // If I put 3 normal 5p and 1 red 5p. Total 4.
-        // Next normal 5p -> blocked by isTileLimitReached.
-        // Next red 5p -> blocked by isRedLimitReached AND isTileLimitReached.
-
-        // If I put 1 red 5p.
-        // Next red 5p -> blocked by isRedLimitReached.
-
-        // So passing 't' to checks is correct.
-
+        const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat);
         return (
             <div className={disabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}>
                 <TileDisplay key={t} tile={t} onClick={() => !disabled && addTile(t)} />
             </div>
         );
     };
+
+    // 最大枚数に達しているかどうかの全体判定（handタブでのみ最大枚数制限が一番厳しくかかるが、他のタブでも追加できない場合は無効化する）
+    // 要件：門前時14枚（または14枚-副露）に達した時点で入力不可＆半透明
+    const isMaxReached = activeTab === 'hand' && totalTilesInStructure >= maxTiles;
 
     return (
         <div className="space-y-4 p-4 bg-gray-50 rounded-lg shadow-inner">
@@ -234,10 +226,20 @@ export function HandInput({
 
 
             {/* Input Panel - Vertical Layout with Horizontal Rows */}
-            <div className="flex flex-col gap-4 items-start">
-                {/* Manzu Row */}
+            <div className={`flex flex-col gap-4 items-start transition-opacity duration-200 ${isMaxReached ? 'opacity-50 pointer-events-none' : ''}`}>
+                {/* Upper Row: Manzu and Zihai */}
                 <div className="flex flex-row gap-2 items-center justify-start">
                     {manzu.map((t: Tile) => renderTileButton(t))}
+
+                    {/* Spacer to align Haku/Hatsu/Chun properly under Pinzu. 
+                        Pinzu has 9 regular tiles + 1 red.
+                        Manzu has 2 tiles (1m, 9m).
+                        We want Chun (the 7th zihai) to align under Red 5p.
+                        Red 5p is the 10th item in the Pinzu row.
+                        So we need (Manzu(2) + Spacer + Zihai(7)) to align dynamically or just use a fixed spacer.
+                        A spacer of width roughly equal to 1 tile will push Zihai to right. */}
+                    <div className="w-8 sm:w-10"></div> {/* 1牌分程度のスペース */}
+                    {zihai.map((t: Tile) => renderTileButton(t))}
                 </div>
 
                 {/* Pinzu Row */}
@@ -250,11 +252,6 @@ export function HandInput({
                 <div className="flex flex-row gap-2 items-center justify-start">
                     {souzu.map((t: Tile) => renderTileButton(t))}
                     {renderTileButton(TILES.s5r)}
-                </div>
-
-                {/* Zihai Row */}
-                <div className="flex flex-row gap-2 items-center justify-start">
-                    {zihai.map((t: Tile) => renderTileButton(t))}
                 </div>
             </div>
         </div>

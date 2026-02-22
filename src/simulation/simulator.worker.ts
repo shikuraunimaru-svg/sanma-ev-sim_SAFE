@@ -451,13 +451,12 @@ export function simulateAllDiscards(config: SimulationConfig): { results: Discar
 
         runBatchSimulations(config, action, stats, INITIAL_TRIALS, fullWall);
 
-        if (validationMode) {
-            stats.stats2000 = {
-                wins: stats.wins,
-                totalScore: stats.totalScore,
-                ev: stats.totalScore / stats.trials
-            };
-        }
+        // Always save 2000 trial stats for comparison / CSV reporting
+        stats.stats2000 = {
+            wins: stats.wins,
+            totalScore: stats.totalScore,
+            ev: stats.totalScore / stats.trials
+        };
 
         statsList.push(stats);
 
@@ -470,41 +469,32 @@ export function simulateAllDiscards(config: SimulationConfig): { results: Discar
         }
     }
 
-    // Phase 2: Pruning (if not validation mode)
+    // Phase 2: Pruning
     let candidatesToRun = statsList;
-    if (!validationMode) {
-        const sorted = [...statsList].sort((a, b) => (b.totalScore / b.trials) - (a.totalScore / a.trials));
-        const bestEV = sorted[0].totalScore / sorted[0].trials;
+    const sorted = [...statsList].sort((a, b) => (b.totalScore / b.trials) - (a.totalScore / a.trials));
+    const bestEV = sorted[0].totalScore / sorted[0].trials;
 
-        // Prune logic...
-        candidatesToRun = sorted.filter(s => {
-            const ev = s.totalScore / s.trials;
-            const keep = ev >= bestEV * 0.9 || (bestEV < 0 && ev >= bestEV * 1.1); // Keep if close
-            s.pruned = !keep;
-            return keep;
-        });
+    // Prune logic
+    candidatesToRun = sorted.filter(s => {
+        const ev = s.totalScore / s.trials;
+        const keep = ev >= bestEV * 0.9 || (bestEV < 0 && ev >= bestEV * 1.1); // Keep if close
+        s.pruned = !keep;
+        return keep;
+    });
 
-        // Always keep Kita/Ankan/Kakan/Tsumo for variety if they have reasonable EV
-        for (const s of statsList) {
-            if (s.pruned && (s.action.type === 'kita' || s.action.type === 'ankan' || s.action.type === 'kakan' || s.action.type === 'tsumo')) {
-                if (s.trials > 0 && (s.totalScore / s.trials) > bestEV * 0.5) { // Relaxed pruning
-                    s.pruned = false;
-                    if (!candidatesToRun.includes(s)) candidatesToRun.push(s);
-                }
+    // Always keep Kita/Ankan/Kakan/Tsumo for variety if they have reasonable EV
+    for (const s of statsList) {
+        if (s.pruned && (s.action.type === 'kita' || s.action.type === 'ankan' || s.action.type === 'kakan' || s.action.type === 'tsumo')) {
+            if (s.trials > 0 && (s.totalScore / s.trials) > bestEV * 0.5) { // Relaxed pruning
+                s.pruned = false;
+                if (!candidatesToRun.includes(s)) candidatesToRun.push(s);
             }
         }
     }
 
     // Phase 3: Detailed Simulation (3000 more)
     console.log(`\n=== Phase 3: Detailed Simulation (${ADDITIONAL_TRIALS} trials) ===`);
-    if (!validationMode) {
-        // If pruned, run top 3 anyway? No, relying on prune logic.
-        // But let's sort current candidates by EV to prioritize.
-        candidatesToRun.sort((a, b) => (b.totalScore / b.trials) - (a.totalScore / a.trials));
-    }
-
-    // In Validation Mode, we run ALL.
-    if (validationMode) candidatesToRun = statsList;
+    candidatesToRun.sort((a, b) => (b.totalScore / b.trials) - (a.totalScore / a.trials));
 
     for (const s of candidatesToRun) {
         let actionKey = "";
