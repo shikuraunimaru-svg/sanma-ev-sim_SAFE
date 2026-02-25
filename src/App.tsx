@@ -11,37 +11,14 @@ import type { Mentsu } from './core/shanten';
 import type { SimulationConfig, DiscardResult } from './simulation/engine';
 import type { YakuResult } from './core/yaku';
 import type { ScoreResult } from './core/score';
-import { countVisibleTiles } from './utils/tileCount';
-import { TILES } from './core/tile';
 
 export default function App() {
   const [hand, setHand] = useState<Tile[]>([]);
   const [fixedMentsu, setFixedMentsu] = useState<Mentsu[]>([]);
   const [doraIndicators, setDoraIndicators] = useState<Tile[]>([]);
-  const [kitaCount, setKitaCount] = useState(0);
   const [currentTurn, setCurrentTurn] = useState(1);
   const [validationMode, setValidationMode] = useState(false);
   const [csvReport, setCsvReport] = useState<string | undefined>(undefined);
-
-  // Calculate used North tiles (excluding current kitaCount state)
-  // Note: built-in countVisibleTiles adds state.kitaCount if tile is z4.
-  // We pass 0 to get only "other" occurrences.
-  const northInHandMeldsDora = countVisibleTiles(TILES.z4, {
-    hand,
-    fixedMentsu,
-    doraIndicators,
-    kitaCount: 0
-  });
-
-  // Max Kita is limited by visible Norths
-  const maxKita = Math.max(0, 4 - northInHandMeldsDora);
-
-  // Auto-clamp kitaCount if it exceeds max available
-  useEffect(() => {
-    if (kitaCount > maxKita) {
-      setKitaCount(maxKita);
-    }
-  }, [maxKita, kitaCount]);
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [results, setResults] = useState<DiscardResult[]>([]);
@@ -58,11 +35,22 @@ export default function App() {
   if (winResult) console.log("UI result:", winResult);
 
   useEffect(() => {
-    workerRef.current = new Worker(new URL('./simulation/simulator.worker.ts', import.meta.url), {
-      type: 'module'
-    });
+    if (!workerRef.current) {
+      console.log("Creating worker (once)");
+      workerRef.current = new Worker(new URL('./simulation/simulator.worker.ts', import.meta.url), {
+        type: 'module'
+      });
+    }
 
-    workerRef.current.onmessage = (e) => {
+    const worker = workerRef.current;
+    console.log("Using worker instance:", worker);
+
+    worker.onerror = (e: ErrorEvent) => {
+      console.error("Worker runtime error:", e);
+    };
+
+    worker.onmessage = (e: MessageEvent) => {
+      console.log("Main thread received:", e.data);
       const { type, results: data, winResult: winData, summary, csvReport: report } = e.data;
       if (type === 'RESULT' && data) {
         setResults(data);
@@ -82,7 +70,9 @@ export default function App() {
     };
 
     return () => {
-      workerRef.current?.terminate();
+      console.log("Terminating worker");
+      worker?.terminate();
+      workerRef.current = null;
     };
   }, []);
 
@@ -103,13 +93,14 @@ export default function App() {
       fixedMentsu: fixedMentsu,
       myDiscards: [], // TODO: Add input if needed
       doraIndicators,
-      kitaCount,
+      kitaCount: 0, // Automated Kita tile count initialized to 0
       trials: 5000,
       currentTurn,
       isDealer: true,
       validationMode
     };
 
+    console.log("Posting message to worker");
     workerRef.current.postMessage({ type: 'START_SIMULATION', config });
   };
 
@@ -129,17 +120,13 @@ export default function App() {
             onFixedMentsuChange={setFixedMentsu}
             doraIndicators={doraIndicators}
             onDoraChange={setDoraIndicators}
-            kitaCount={kitaCount}
           />
         </section>
 
         <section className="bg-white p-6 rounded-lg shadow">
           <Settings
-            kitaCount={kitaCount}
-            onKitaChange={(val) => setKitaCount(Math.min(val, maxKita))}
             currentTurn={currentTurn}
             onTurnChange={setCurrentTurn}
-            maxKita={maxKita}
             validationMode={validationMode}
             onValidationModeChange={setValidationMode}
           />
@@ -162,12 +149,11 @@ export default function App() {
           <section className="bg-white p-6 rounded-lg shadow transition-opacity duration-500 ease-in-out">
             <h2 className="text-xl font-bold mb-4">解析結果</h2>
 
-            {/* Input Summary */}
             <ResultHeader
               hand={hand}
               fixedMentsu={fixedMentsu}
               doraIndicators={doraIndicators}
-              kitaCount={kitaCount}
+              kitaCount={0}
               executionTurn={currentTurn}
               summary={simulationSummary}
             />

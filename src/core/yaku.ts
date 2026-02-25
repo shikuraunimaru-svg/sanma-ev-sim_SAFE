@@ -55,15 +55,11 @@ export function calculateScore(
     if (!yakuman) {
         han += state.doraCount;
         han += state.uraDoraCount; // Add Ura Dora
-        han += state.kitaCount;
         if (state.doraCount > 0) {
             displayYakuList.push({ name: 'Dora', han: state.doraCount, isDora: true });
         }
         if (state.uraDoraCount > 0) {
             displayYakuList.push({ name: 'Ura Dora', han: state.uraDoraCount, isDora: true });
-        }
-        if (state.kitaCount > 0) {
-            displayYakuList.push({ name: 'Kita', han: state.kitaCount, isDora: true });
         }
     }
 

@@ -26,15 +26,8 @@ export function ResultsTable({ results }: Props) {
                 <tbody className="bg-white">
                     {sorted.map((res) => {
                         const isBest = res === best;
-                        const key = res.action.type === 'kita'
-                            ? 'kita'
-                            : res.action.type === 'ankan'
-                                ? `ankan-${res.action.tile}`
-                                : res.action.type === 'kakan'
-                                    ? `kakan-${res.action.tile}`
-                                    : res.action.type === 'tsumo'
-                                        ? 'tsumo'
-                                        : `discard-${res.action.tile}`;
+                        const action = res.action;
+                        const key = `${action.type}-${'tile' in action ? action.tile : ''}-${'riichi' in action ? !!action.riichi : ''}`;
 
                         // Calculate EV loss
                         let lossDisplay = null;

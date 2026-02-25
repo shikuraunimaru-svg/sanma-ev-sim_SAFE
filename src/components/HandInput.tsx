@@ -15,7 +15,6 @@ type Props = {
     onFixedMentsuChange: (mentsu: Mentsu[]) => void;
     doraIndicators: Tile[];
     onDoraChange: (dora: Tile[]) => void;
-    kitaCount: number;
     maxTiles?: number;
 };
 
@@ -28,7 +27,6 @@ export function HandInput({
     onFixedMentsuChange,
     doraIndicators,
     onDoraChange,
-    kitaCount,
     maxTiles = 14
 }: Props) {
     const [activeTab, setActiveTab] = useState<TabId>('hand');
@@ -40,7 +38,7 @@ export function HandInput({
         hand,
         fixedMentsu,
         doraIndicators,
-        kitaCount
+        kitaCount: 0 // Automated Kita means user never specifies it directly in UI state representation
     };
 
     const addTile = (t: Tile) => {
@@ -155,7 +153,10 @@ export function HandInput({
 
     // Render Helper
     const renderTileButton = (t: Tile) => {
-        const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat);
+        const isNorth = t === TILES.z4;
+        const isNorthDisabled = isNorth && activeTab !== 'dora';
+        const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat) || isNorthDisabled;
+
         return (
             <div className={disabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}>
                 <TileDisplay key={t} tile={t} onClick={() => !disabled && addTile(t)} />

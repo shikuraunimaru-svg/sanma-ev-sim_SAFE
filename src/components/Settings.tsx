@@ -1,15 +1,10 @@
 type Props = {
-    kitaCount: number;
-    onKitaChange: (count: number) => void;
     currentTurn: number;
     onTurnChange: (turn: number) => void;
-    maxKita: number;
 };
 
 export function Settings({
-    kitaCount, onKitaChange,
     currentTurn, onTurnChange,
-    maxKita,
     validationMode, onValidationModeChange
 }: Props & {
     validationMode: boolean;
@@ -20,23 +15,6 @@ export function Settings({
             <h3 className="text-lg font-bold text-gray-700">設定</h3>
 
             <div className="grid grid-cols-2 gap-4">
-                {/* Kita Count */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">抜き北の枚数</label>
-                    <select
-                        value={kitaCount}
-                        onChange={(e) => onKitaChange(Number(e.target.value))}
-                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                    >
-                        {[0, 1, 2, 3, 4].map(n => (
-                            <option key={n} value={n} disabled={n > maxKita}>
-                                {n}枚 {n > maxKita ? '(不可)' : ''}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* North In Wall Removed */}
 
                 {/* Trials Removed */}
 
