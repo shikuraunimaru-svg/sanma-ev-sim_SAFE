@@ -2,7 +2,7 @@ import { TILES, toNormalFive, isRedFive, ALL_SANMA_TILES, getKanTiles } from '..
 import type { Tile } from '../core/tile';
 import { calculateShanten, getAgariPatterns } from '../core/shanten';
 import type { Mentsu, HandStructure } from '../core/shanten';
-import { calculateScore, isChiitoitsu, isKokushiMusou } from '../core/yaku';
+import { calculateScore } from '../core/yaku';
 import type { GameState, YakuResult } from '../core/yaku';
 import { calculatePoints } from '../core/score';
 import type { ScoreResult } from '../core/score';
@@ -50,18 +50,11 @@ function resolveFinalScore(
     result: YakuResult,
     state: GameState
 ): { finalHan: number; points: number } {
-    const baseHan = result.han;
-    // result.han already includes state.doraCount and state.uraDoraCount
-
-    // We add Kita fans here. 
-    // If North is the dora, countDora already added 1 per Kita.
-    // In Sanma, North is usually 1 fan regardless (Nukidora).
-    const finalHan = baseHan + state.kitaCount;
-    const finalResult = { ...result, han: finalHan };
+    const finalResult = { ...result, han: result.han };
     const isDealer = state.isDealer ?? false;
     const points = calculatePoints(finalResult, isDealer, true).total;
 
-    return { finalHan, points };
+    return { finalHan: result.han, points };
 }
 
 export type Action =
@@ -76,7 +69,8 @@ export type SimulationConfig = {
     fixedMentsu: Mentsu[];
     myDiscards: Tile[];
     doraIndicators: Tile[];
-    kitaCount: number;
+    myKita: number;
+    otherKita: number;
     trials: number;
     currentTurn: number;
     isDealer: boolean;
@@ -93,6 +87,11 @@ export type DiscardResult = {
     effectiveTiles?: { tile: Tile, count: number }[];
     shantenBefore: number;
     shantenAfter: number;
+    trialCount: number;
+    previousMeanEV: number;
+    stableCount: number;
+    converged: boolean;
+    initialRemainingTiles?: number;
 };
 
 export type SimulationSummary = {
@@ -127,10 +126,11 @@ export function getWinningTiles(hand: Tile[], fixedMentsuCount: number): Tile[] 
 
 export function runSinglePath(
     initialHand: Tile[],
-    fixedMentsu: Mentsu[],
+    localFixedMentsuArr: Mentsu[],
     initialAction: Action,
     allVisible: Tile[],
-    initialKita: number,
+    myKita: number,
+    otherKita: number,
     doraIndicators: Tile[],
     currentTurn: number,
     isDealer: boolean
@@ -138,9 +138,9 @@ export function runSinglePath(
     debugSimCountGlobal++;
 
     const hand = [...initialHand];
-    let nukidoraCount = initialKita;
+    let nukidoraCount = myKita;
     const doraInds = [...doraIndicators];
-    const localFixedMentsu = [...fixedMentsu];
+    const localFixedMentsu = [...localFixedMentsuArr];
 
     // Initialize Counts
     const counts = getInitialCounts();
@@ -148,6 +148,17 @@ export function runSinglePath(
         const idx = TILE_TYPES.indexOf(tile);
         if (idx !== -1 && counts[idx] > 0) counts[idx]--;
     }
+
+    // Account for Kita (North) tiles already extracted but maybe not in allVisible
+    const northIdx = TILE_TYPES.indexOf(TILES.z4);
+    const visibleKitaCount = myKita + otherKita;
+    // We assume allVisible already includes North tiles if they were explicitly provided as tiles.
+    // However, the UI now provides kitaCount as a number.
+    // Let's ensure we don't double-subtract if North is also in allVisible.
+    // Actually, usually Kita are NOT in allVisible unless they are in someone's discard or my hand.
+    // But in our system, we should prioritize the counts.
+    // Let's just set the remainder directly for North.
+    counts[northIdx] = Math.max(0, counts[northIdx] - visibleKitaCount);
 
     let isRiichi = (initialAction.type === 'discard' || initialAction.type === 'ankan') ? !!initialAction.riichi : false;
 
@@ -160,6 +171,11 @@ export function runSinglePath(
     let pathTurnCount = 0;
     let scoreAdjustment = 0;
 
+    // Diagnostic counters
+    let diagTurnDraws = 0;
+    let diagExtraDraws = 0;
+    let diagNukiCounts = 0;
+
     const NORTH = TILES.z4;
 
     const TOTAL_TILES = 108;
@@ -171,7 +187,8 @@ export function runSinglePath(
     const drawsConsumed = turnsPassed * 3;
 
     // mountainSize represents only the DRAWABLE (live wall) tiles.
-    let mountainSize = PLAYABLE_TILES - INITIAL_HANDS - doraCountValue - drawsConsumed - initialKita;
+    // It is reduced by initial hands, dora indicators, turns passed, AND replacement draws for Kita.
+    let mountainSize = PLAYABLE_TILES - INITIAL_HANDS - doraCountValue - drawsConsumed - visibleKitaCount;
 
     // totalInvisibleCount represents ALL tiles we haven't seen yet (Live Wall + Dead Wall + Other's hidden hands).
     // This is the correct denominator for drawing probability of any unknown tile.
@@ -183,7 +200,7 @@ export function runSinglePath(
 
     const initialTotalForSummary = mountainSize;
 
-    const drawTileCore = (): Tile | null => {
+    const drawTileCore = (category: 'turn' | 'extra'): Tile | null => {
         if (mountainSize <= 0) return null;
         if (totalInvisibleCount <= 0) return null;
 
@@ -199,6 +216,10 @@ export function runSinglePath(
                 counts[i]--;
                 totalInvisibleCount--;
                 mountainSize--;
+
+                if (category === 'turn') diagTurnDraws++;
+                else diagExtraDraws++;
+
                 return tile;
             }
             rand -= counts[i];
@@ -206,8 +227,9 @@ export function runSinglePath(
         return null;
     };
 
-    const drawTileWithAutoKita = (): Tile | null => {
+    const drawTileWithAutoKita = (isPlayer: boolean, isTurnDraw: boolean): Tile | null => {
         let safety = 0;
+        let first = true;
         while (true) {
             safety++;
             if (safety > 1000) {
@@ -216,11 +238,15 @@ export function runSinglePath(
 
             if (mountainSize <= 0) return null;
 
-            let tile = drawTileCore();
+            const category = (first && isTurnDraw) ? 'turn' : 'extra';
+            let tile = drawTileCore(category);
+            first = false;
+
             if (!tile) return null;
 
             if (tile === NORTH) {
-                nukidoraCount++;
+                diagNukiCounts++;
+                if (isPlayer) nukidoraCount++;
                 continue;
             }
             return tile;
@@ -287,7 +313,7 @@ export function runSinglePath(
         if (hand[i] === NORTH) {
             hand.splice(i, 1);
             nukidoraCount++;
-            const drawn = drawTileWithAutoKita();
+            const drawn = drawTileWithAutoKita(true, false); // Replacement only
             if (drawn) hand.push(drawn);
         }
     }
@@ -333,9 +359,29 @@ export function runSinglePath(
                 const result = calculateScore(hand, patterns[0], state);
                 if (isValidWin(result)) {
                     const { points } = resolveFinalScore(result, state);
-                    return { type: 'win', point: points + scoreAdjustment, isTenpai: true, initialRemainingTiles: initialTotalForSummary };
+                    if (debugSimCountGlobal <= 1) {
+                        console.log("Win path tiles consumption:", {
+                            initial: initialTotalForSummary,
+                            normalDraws: diagTurnDraws,
+                            extraDraws: diagExtraDraws,
+                            nukiCounts: diagNukiCounts,
+                            finalRemaining: mountainSize,
+                            isVerified: (initialTotalForSummary - diagTurnDraws - diagExtraDraws === mountainSize)
+                        });
+                    }
+                    return { type: 'win', point: points + (isRiichi ? 1000 : 0) + scoreAdjustment, isTenpai: true, initialRemainingTiles: initialTotalForSummary };
                 }
             }
+        }
+        if (debugSimCountGlobal <= 1) {
+            console.log("Draw path tiles consumption (initial tsumo):", {
+                initial: initialTotalForSummary,
+                normalDraws: diagTurnDraws,
+                extraDraws: diagExtraDraws,
+                nukiCounts: diagNukiCounts,
+                finalRemaining: mountainSize,
+                isVerified: (initialTotalForSummary - diagTurnDraws - diagExtraDraws === mountainSize)
+            });
         }
         return { type: 'draw', point: 0, isTenpai: agariShanten <= 0, initialRemainingTiles: initialTotalForSummary };
     }
@@ -352,13 +398,14 @@ export function runSinglePath(
         }
     } else if (initialAction.type === 'kita') {
         const kIdx = hand.indexOf(NORTH);
-        if (kIdx !== -1) {
-            hand.splice(kIdx, 1);
-            nukidoraCount++;
-            const drawn = drawTileWithAutoKita();
-            if (drawn) hand.push(drawn);
-            performGreedyDiscard();
+        if (kIdx === -1) {
+            throw new Error("Invalid kita action: no North tile in hand");
         }
+        hand.splice(kIdx, 1);
+        nukidoraCount++;
+        const drawn = drawTileWithAutoKita(true, false); // Replacement only
+        if (drawn) hand.push(drawn);
+        performGreedyDiscard();
     } else if (initialAction.type === 'ankan') {
         const normTile = toNormalFive(initialAction.tile);
         let removedCount = 0;
@@ -377,7 +424,7 @@ export function runSinglePath(
         } else {
             checkAndApplyRiichi();
         }
-        const drawn = drawTileWithAutoKita();
+        const drawn = drawTileWithAutoKita(true, false); // Replacement only
         if (drawn) hand.push(drawn);
         performGreedyDiscard();
     } else if (initialAction.type === 'kakan') {
@@ -386,7 +433,7 @@ export function runSinglePath(
         if (kakanIdx !== -1) hand.splice(kakanIdx, 1);
         const pon = localFixedMentsu.find(m => m.type === 'koutsu' && m.tile === normTile);
         if (pon) { pon.type = 'kantsu'; pon.isKan = true; pon.tiles.push(initialAction.tile); }
-        const drawn = drawTileWithAutoKita();
+        const drawn = drawTileWithAutoKita(true, false); // Replacement only
         if (drawn) hand.push(drawn);
         performGreedyDiscard();
     }
@@ -403,13 +450,13 @@ export function runSinglePath(
         // Opponents (Simulated as random counts reduction)
         for (let j = 0; j < 2; j++) {
             if (mountainSize <= 0) break;
-            drawTileCore(); // Just discard it
+            drawTileWithAutoKita(false, true); // Opponent turn draw
         }
 
         if (mountainSize <= 0) break;
 
         // My Draw
-        const drawn = drawTileWithAutoKita();
+        const drawn = drawTileWithAutoKita(true, true); // Player turn draw
         if (!drawn) break;
         hand.push(drawn);
 
@@ -455,6 +502,16 @@ export function runSinglePath(
                 const result = calculateScore(hand, patterns[0], state);
                 if (isValidWin(result)) {
                     const { points } = resolveFinalScore(result, state);
+                    if (debugSimCountGlobal <= 1) {
+                        console.log("Win path tiles consumption (sim loop):", {
+                            initial: initialTotalForSummary,
+                            normalDraws: diagTurnDraws,
+                            extraDraws: diagExtraDraws,
+                            nukiCounts: diagNukiCounts,
+                            finalRemaining: mountainSize,
+                            isVerified: (initialTotalForSummary - diagTurnDraws - diagExtraDraws === mountainSize)
+                        });
+                    }
                     return { type: 'win', point: points + (isRiichi ? 1000 : 0) + scoreAdjustment, isTenpai: true, initialRemainingTiles: initialTotalForSummary };
                 }
             }
@@ -464,6 +521,16 @@ export function runSinglePath(
         else if (!performGreedyDiscard()) break;
     }
 
+    if (debugSimCountGlobal <= 1) {
+        console.log("Draw path tiles consumption (final):", {
+            initial: initialTotalForSummary,
+            normalDraws: diagTurnDraws,
+            extraDraws: diagExtraDraws,
+            nukiCounts: diagNukiCounts,
+            finalRemaining: mountainSize,
+            isVerified: (initialTotalForSummary - diagTurnDraws - diagExtraDraws === mountainSize)
+        });
+    }
     return { type: 'draw', point: scoreAdjustment + (calculateShanten(hand, localFixedMentsu.length) <= 0 ? 1000 : -1000), isTenpai: calculateShanten(hand, localFixedMentsu.length) <= 0, initialRemainingTiles: initialTotalForSummary };
 }
 
@@ -476,28 +543,17 @@ export function evaluateWinningHand(
     bestStructure: HandStructure;
     allPatterns: { yaku: YakuResult; score: ScoreResult; structure: HandStructure }[];
 } | null {
-    if (isKokushiMusou(hand)) {
-        const result: YakuResult = { han: 13, fu: 0, yaku: ["国士無双"], yakuList: [{ name: "国士無双", han: 13 }], yakuman: true, yakumanMultiplier: 1 };
-        const score = calculatePoints(result, config.isDealer, true);
-        return { bestYaku: result, bestScore: score, bestStructure: { head: -1 as Tile, mentsu: [] }, allPatterns: [{ yaku: result, score, structure: { head: -1 as Tile, mentsu: [] } }] };
-    }
+    const isHaitei = (config.currentTurn || 0) >= 18;
 
     const state: GameState = {
         bakaze: TILES.z1, jikaze: config.isDealer ? TILES.z1 : TILES.z2,
         isRiichi: false, isDoubleRiichi: false, isIppatsu: false, isTsumo: true,
-        isRinshan: false, isChankan: false, isHaitei: false, isHoutei: false,
-        kitaCount: config.kitaCount, doraCount: countDora(hand, config.doraIndicators, [], config.kitaCount),
+        isRinshan: false, isChankan: false, isHaitei, isHoutei: false,
+        kitaCount: config.myKita, doraCount: countDora(hand, config.doraIndicators, [], config.myKita),
         uraDoraCount: 0, winningTile: hand[hand.length - 1], isDealer: config.isDealer,
-        turnCount: config.currentTurn, hasCallOccurred: config.kitaCount > 0 || config.fixedMentsu.some(m => m.isOpen || m.isKan),
+        turnCount: config.currentTurn, hasCallOccurred: config.myKita > 0 || config.fixedMentsu.some(m => m.isOpen || m.isKan),
         discardCount: config.myDiscards.length
     };
-
-    if (isChiitoitsu(hand)) {
-        const result = calculateScore(hand, { head: -1 as Tile, mentsu: [] }, state);
-        if (!validateAgari(result)) return null;
-        const score = calculatePoints(result, config.isDealer, true);
-        return { bestYaku: result, bestScore: score, bestStructure: { head: -1 as Tile, mentsu: [] }, allPatterns: [{ yaku: result, score, structure: { head: -1 as Tile, mentsu: [] } }] };
-    }
 
     const patterns = getAgariPatterns(hand, config.fixedMentsu || []);
     if (patterns.length === 0) return null;
@@ -509,13 +565,31 @@ export function evaluateWinningHand(
     }).filter(p => p !== null) as { yaku: YakuResult, score: ScoreResult, structure: HandStructure }[];
 
     if (evaluated.length === 0) return null;
-    const sorted = [...evaluated].sort((a, b) => b.yaku.han - a.yaku.han);
 
-    return { bestYaku: sorted[0].yaku, bestScore: sorted[0].score, bestStructure: sorted[0].structure, allPatterns: evaluated };
+    // Sort by TOTAL SCORE (descending) to maximize points
+    const sorted = [...evaluated].sort((a, b) => b.score.total - a.score.total);
+
+    if (sorted.length > 0) {
+        const best = sorted[0];
+        console.log("--- Agari Evaluation Debug ---");
+        console.log({
+            totalHan: best.yaku.han,
+            baseHan: best.yaku.yakuList.filter(y => !y.isDora).reduce((s, y) => s + y.han, 0),
+            doraCount: state.doraCount,
+            nukiDoraCount: state.kitaCount,
+            yakuList: best.yaku.yakuList.map(y => `${y.name}(${y.han})`),
+            isTsumo: state.isTsumo,
+            isHaitei: state.isHaitei,
+            turnCount: state.turnCount
+        });
+        console.log("-------------------------------");
+    }
+
+    return { bestYaku: sorted[0].yaku, bestScore: sorted[0].score, bestStructure: sorted[0].structure, allPatterns: sorted };
 }
 
 export function countDora(hand: Tile[], doraInds: Tile[], fixedMentsu: Mentsu[] = [], kitaCount: number = 0): number {
-    let count = 0;
+    let count = kitaCount; // Basic Nukidora
     for (const ind of doraInds) {
         const doraValue = getDoraValue(ind);
         if (doraValue === TILES.z4) count += kitaCount;

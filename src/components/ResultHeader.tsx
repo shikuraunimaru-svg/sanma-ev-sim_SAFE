@@ -45,14 +45,9 @@ export function ResultHeader({ hand, fixedMentsu, doraIndicators, kitaCount, exe
                     </div>
                 )}
 
-                {kitaCount > 0 && (
-                    <div className="flex flex-row gap-[2px] items-center border-l border-gray-300 pl-4">
-                        <span className="text-gray-600 mr-2 font-bold">抜き北：</span>
-                        {Array.from({ length: kitaCount }).map((_, idx) => (
-                            <TileDisplay key={`summary-kita-${idx}`} tile={30} size="small" />
-                        ))}
-                    </div>
-                )}
+                <div className="flex flex-row gap-1 items-center border-l border-gray-300 pl-4">
+                    <span className="text-gray-700 font-bold">自分の抜き北：{kitaCount}枚</span>
+                </div>
 
                 <div className="flex flex-row gap-1 items-center border-l border-gray-300 pl-4">
                     <span className="execution-turn font-bold text-gray-700">

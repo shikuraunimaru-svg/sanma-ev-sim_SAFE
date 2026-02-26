@@ -81,7 +81,7 @@ export function ResultsTable({ results }: Props) {
                                     {(res.tenpaiRate * 100).toFixed(1)}%
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                    {res.effectiveTiles && res.shantenAfter <= 3 && (
+                                    {res.effectiveTiles && res.effectiveTiles.length > 0 && (
                                         <div className="flex flex-col">
                                             <div className="text-[13px] font-medium text-gray-700 mb-1">
                                                 {res.effectiveTiles.length}種{res.effectiveTiles.reduce((sum: number, t) => sum + t.count, 0)}枚
@@ -91,7 +91,7 @@ export function ResultsTable({ results }: Props) {
                                                     </span>
                                                 )}
                                             </div>
-                                            <div className="flex flex-wrap gap-[2px] max-w-[220px]">
+                                            <div className="flex flex-wrap gap-1 max-w-[280px]">
                                                 {res.effectiveTiles.map(et => (
                                                     <div key={et.tile} className="w-[18px] h-auto flex-shrink-0">
                                                         <TileDisplay
@@ -104,8 +104,9 @@ export function ResultsTable({ results }: Props) {
                                             </div>
                                         </div>
                                     )}
-                                    {(!res.effectiveTiles || res.shantenAfter > 3) && (
+                                    {(!res.effectiveTiles || res.effectiveTiles.length === 0) && (
                                         <div className="text-[13px] font-medium text-gray-400">
+                                            -
                                             {res.shantenAfter > res.shantenBefore && res.action.type === 'discard' && (
                                                 <span className="ml-1 text-red-500 font-bold">
                                                     (向聴戻し)

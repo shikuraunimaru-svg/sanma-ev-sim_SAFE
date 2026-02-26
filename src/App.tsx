@@ -6,17 +6,20 @@ import { ResultsTable } from './components/ResultsTable';
 import { ResultHeader } from './components/ResultHeader';
 import { TileDisplay } from './components/TileDisplay';
 import { MentsuDisplay } from './components/MentsuDisplay';
-import type { Tile } from './core/tile';
+import { type Tile, TILES } from './core/tile';
 import type { Mentsu } from './core/shanten';
-import type { SimulationConfig, DiscardResult } from './simulation/engine';
+import { type SimulationConfig, type DiscardResult, evaluateWinningHand } from './simulation/engine';
 import type { YakuResult } from './core/yaku';
 import type { ScoreResult } from './core/score';
+import { calculateShanten, getShantenBreakdown } from './core/shanten';
 
 export default function App() {
   const [hand, setHand] = useState<Tile[]>([]);
   const [fixedMentsu, setFixedMentsu] = useState<Mentsu[]>([]);
   const [doraIndicators, setDoraIndicators] = useState<Tile[]>([]);
   const [currentTurn, setCurrentTurn] = useState(1);
+  const [myKita, setMyKita] = useState(0);
+  const [otherKita, setOtherKita] = useState(0);
   const [validationMode, setValidationMode] = useState(false);
   const [csvReport, setCsvReport] = useState<string | undefined>(undefined);
 
@@ -29,6 +32,7 @@ export default function App() {
     bestStructure: any; // Using any briefly to avoid complex type import for now
     allPatterns: { yaku: YakuResult; score: ScoreResult; structure: any }[];
   } | null>(null);
+  const [isAgariMode, setIsAgariMode] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
 
@@ -76,6 +80,41 @@ export default function App() {
     };
   }, []);
 
+  const getMaxKitaTotal = (doraInds: Tile[]) => {
+    return doraInds.includes(TILES.z4) ? 3 : 4;
+  };
+
+  const handleMyKitaChange = (val: number) => {
+    const maxTotal = getMaxKitaTotal(doraIndicators);
+    const safeVal = isNaN(val) ? 0 : Math.max(0, Math.min(maxTotal, Math.floor(val)));
+    setMyKita(safeVal);
+    if (safeVal + otherKita > maxTotal) {
+      setOtherKita(maxTotal - safeVal);
+    }
+  };
+
+  const handleOtherKitaChange = (val: number) => {
+    const maxTotal = getMaxKitaTotal(doraIndicators);
+    const safeVal = isNaN(val) ? 0 : Math.max(0, Math.min(maxTotal, Math.floor(val)));
+    setOtherKita(safeVal);
+    if (safeVal + myKita > maxTotal) {
+      setMyKita(maxTotal - safeVal);
+    }
+  };
+
+  useEffect(() => {
+    const maxTotal = getMaxKitaTotal(doraIndicators);
+    if (myKita + otherKita > maxTotal) {
+      console.log(`Dora indicator changed to North. Correcting Kita total to ${maxTotal}`);
+      if (myKita > maxTotal) {
+        setMyKita(maxTotal);
+        setOtherKita(0);
+      } else {
+        setOtherKita(maxTotal - myKita);
+      }
+    }
+  }, [doraIndicators]);
+
   const runSimulation = () => {
     if (!workerRef.current) return;
     if (hand.length % 3 !== 2) {
@@ -87,21 +126,46 @@ export default function App() {
     setResults([]);
     setWinResult(null);
     setCsvReport(undefined);
+    setIsAgariMode(false);
 
     const config: SimulationConfig = {
       myHand: hand,
       fixedMentsu: fixedMentsu,
       myDiscards: [], // TODO: Add input if needed
       doraIndicators,
-      kitaCount: 0, // Automated Kita tile count initialized to 0
+      myKita,
+      otherKita,
       trials: 5000,
       currentTurn,
       isDealer: true,
       validationMode
     };
 
+    // Check if hand is already winning
+    const shanten = calculateShanten(hand, fixedMentsu.length);
+    if (shanten === -1) {
+      const winData = evaluateWinningHand(hand, config);
+      if (winData) {
+        setWinResult(winData);
+        const breakdown = getShantenBreakdown(hand, fixedMentsu.length);
+        setSimulationSummary({
+          remainingTiles: 108,
+          shanten: {
+            normal: breakdown.normal,
+            chiitoi: breakdown.chiitoi,
+            kokushi: breakdown.kokushi
+          }
+        });
+        setIsAgariMode(true);
+        setIsSimulating(false);
+        return;
+      }
+    }
+
     console.log("Posting message to worker");
-    workerRef.current.postMessage({ type: 'START_SIMULATION', config });
+    if (workerRef.current) {
+      workerRef.current.postMessage({ type: 'START_SIMULATION', config });
+    }
   };
 
   return (
@@ -127,6 +191,10 @@ export default function App() {
           <Settings
             currentTurn={currentTurn}
             onTurnChange={setCurrentTurn}
+            myKita={myKita}
+            onMyKitaChange={handleMyKitaChange}
+            otherKita={otherKita}
+            onOtherKitaChange={handleOtherKitaChange}
             validationMode={validationMode}
             onValidationModeChange={setValidationMode}
           />
@@ -153,7 +221,7 @@ export default function App() {
               hand={hand}
               fixedMentsu={fixedMentsu}
               doraIndicators={doraIndicators}
-              kitaCount={0}
+              kitaCount={myKita}
               executionTurn={currentTurn}
               summary={simulationSummary}
             />

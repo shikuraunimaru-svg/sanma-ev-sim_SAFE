@@ -61,6 +61,9 @@ export function calculateScore(
         if (state.uraDoraCount > 0) {
             displayYakuList.push({ name: 'Ura Dora', han: state.uraDoraCount, isDora: true });
         }
+        if (state.kitaCount > 0) {
+            displayYakuList.push({ name: '抜き北', han: state.kitaCount, isDora: true });
+        }
     }
 
     const result: YakuResult = {
