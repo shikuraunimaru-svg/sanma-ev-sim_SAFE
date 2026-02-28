@@ -1,6 +1,6 @@
 import { TILE_COUNT, toNormalFive } from './tile';
 import type { Tile } from './tile';
-import { SANMA_TILE_COUNT, convert34To27, toStandardTile } from './sanmaTiles';
+import { SANMA_TILE_COUNT, toStandardTile, toSanmaTile } from './sanmaTiles';
 
 // Shanten calculator
 // Returns -1 for Agari, 0 for Tenpai, >0 for Shanten
@@ -14,23 +14,27 @@ export function clearShantenCache() {
 }
 
 export function calculateShanten(hand: Tile[], fixedMentsuCount: number = 0): number {
-    const counts34 = new Array(34).fill(0);
+    const counts27 = new Int32Array(SANMA_TILE_COUNT);
     for (const t of hand) {
-        const norm = toNormalFive(t);
-        if (norm >= 0 && norm < 34) {
-            counts34[norm]++;
-        }
+        const s = toSanmaTile(toNormalFive(t));
+        if (s !== -1) counts27[s]++;
     }
+    return calculateShanten27(counts27, fixedMentsuCount);
+}
 
-    const counts27 = convert34To27(counts34);
-
+/**
+ * High-performance shanten calculation using 27-tile count array.
+ * This skips the 34->27 conversion and is optimized for simulation loops.
+ */
+export function calculateShanten27(counts27: number[] | Int32Array | Uint8Array, fixedMentsuCount: number = 0): number {
     // Check Cache
+    // Using simple string key for now. 
     const key = counts27.join(',') + '|' + fixedMentsuCount;
     if (shantenCache.has(key)) {
         return shantenCache.get(key)!;
     }
 
-    const breakdown = getShantenBreakdown27(counts27, fixedMentsuCount);
+    const breakdown = getShantenBreakdown27(Array.from(counts27), fixedMentsuCount);
     const result = Math.min(breakdown.normal, breakdown.chiitoi, breakdown.kokushi);
 
     // Set Cache
@@ -40,14 +44,11 @@ export function calculateShanten(hand: Tile[], fixedMentsuCount: number = 0): nu
 }
 
 export function getShantenBreakdown(hand: Tile[], fixedMentsuCount: number = 0) {
-    // Wrapper for compatibility or testing if needed, though mostly internal usage
-    // Re-implemented to use 27 logic
-    const counts34 = new Array(34).fill(0);
+    const counts27 = new Array(SANMA_TILE_COUNT).fill(0);
     for (const t of hand) {
-        const norm = toNormalFive(t);
-        if (norm >= 0 && norm < 34) counts34[norm]++;
+        const s = toSanmaTile(toNormalFive(t));
+        if (s !== -1) counts27[s]++;
     }
-    const counts27 = convert34To27(counts34);
     return getShantenBreakdown27(counts27, fixedMentsuCount);
 }
 
@@ -261,10 +262,12 @@ export type HandStructure = {
 
 
 export function getAgariPatterns(hand: Tile[], fixedMentsu: Mentsu[] = []): HandStructure[] {
-    // Convert to 27-ID counts (Sanma)
-    const counts34 = new Array(34).fill(0);
-    for (const t of hand) counts34[toNormalFive(t)]++;
-    const counts = convert34To27(counts34);
+    // Convert directly to 27-ID counts
+    const counts = new Array(SANMA_TILE_COUNT).fill(0);
+    for (const t of hand) {
+        const s = toSanmaTile(toNormalFive(t));
+        if (s !== -1) counts[s]++;
+    }
 
     // Only Chiitoitsu and Kokushi if we are Menzen (no calls)
     const isMenzen = fixedMentsu.length === 0;

@@ -58,6 +58,9 @@ export default function App() {
       const { type, results: data, winResult: winData, summary, csvReport: report } = e.data;
       if (type === 'RESULT' && data) {
         setResults(data);
+        if (summary && summary.totalTimeMs !== undefined) {
+          console.log(`Simulation time: ${summary.totalTimeMs.toFixed(2)} ms`);
+        }
         setSimulationSummary(summary);
         setCsvReport(report);
         setWinResult(null);

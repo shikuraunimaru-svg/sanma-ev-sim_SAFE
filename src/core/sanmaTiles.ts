@@ -35,18 +35,3 @@ export function toStandardTile(t27: number): number {
     return TO_STANDARD_MAP[t27];
 }
 
-export function convert34To27(counts34: number[]): number[] {
-    const c27 = new Array(SANMA_TILE_COUNT).fill(0);
-    // Iterate over valid ranges to copy
-    // Manzu
-    c27[0] = counts34[0];
-    c27[1] = counts34[8];
-    // Pinzu
-    for (let i = 0; i < 9; i++) c27[2 + i] = counts34[9 + i];
-    // Souzu
-    for (let i = 0; i < 9; i++) c27[11 + i] = counts34[18 + i];
-    // Zihai
-    for (let i = 0; i < 7; i++) c27[20 + i] = counts34[27 + i];
-
-    return c27;
-}

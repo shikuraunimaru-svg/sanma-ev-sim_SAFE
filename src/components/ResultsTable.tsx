@@ -68,8 +68,15 @@ export function ResultsTable({ results }: Props) {
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap font-bold text-gray-900 text-lg">
-                                    {Math.round(res.ev).toLocaleString()}
-                                    {lossDisplay}
+                                    <div className="flex flex-col">
+                                        <div>
+                                            {res.ev.toFixed(2)}
+                                            <span className="text-[0.75em] text-gray-500 font-normal ml-1">
+                                                ±{res.confidence95.toFixed(2)}
+                                            </span>
+                                        </div>
+                                        {lossDisplay}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
                                     {(res.winRate * 100).toFixed(2)}%

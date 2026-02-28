@@ -8,8 +8,9 @@ const config: SimulationConfig = {
     fixedMentsu: [],
     myDiscards: [],
     doraIndicators: [TILES.z5], // Red 5s as dora indicator
-    kitaCount: 0,
-    trials: 100, // Not used by simulateAllDiscards in validation mode (it uses 2000/5000 constants)
+    myKita: 0,
+    otherKita: 0,
+    trials: 100,
     currentTurn: 1,
     isDealer: true,
     validationMode: true

@@ -137,9 +137,32 @@ export function getKanTiles(t: Tile): Tile[] {
 }
 
 /**
- * Returns 3 tiles for a Pon.
- * Includes a red tile only if the input tile 't' is a red five.
+ * Converts a 27-indexed Sanma tile to a standard Tile (0-33).
  */
+export function toStandardTile(sanmaIdx: number): Tile {
+    const SANMA_TO_STANDARD = [
+        0, 8, // 1m, 9m
+        9, 10, 11, 12, 13, 14, 15, 16, 17, // 1p-9p
+        18, 19, 20, 21, 22, 23, 24, 25, 26, // 1s-9s
+        27, 28, 29, 30, 31, 32, 33 // E, S, W, N, Wt, G, R
+    ];
+    return SANMA_TO_STANDARD[sanmaIdx] as Tile;
+}
+
+/**
+ * Converts a standard Tile (0-33) to a 27-indexed Sanma tile index.
+ * Returns -1 if the tile is not used in Sanma.
+ */
+export function toSanmaTile(tile: Tile): number {
+    const norm = toNormalFive(tile);
+    const STANDARD_TO_SANMA: Record<number, number> = {
+        0: 0, 8: 1, // 1m, 9m
+        9: 2, 10: 3, 11: 4, 12: 5, 13: 6, 14: 7, 15: 8, 16: 9, 17: 10, // 1p-9p
+        18: 11, 19: 12, 20: 13, 21: 14, 22: 15, 23: 16, 24: 17, 25: 18, 26: 19, // 1s-9s
+        27: 20, 28: 21, 29: 22, 30: 23, 31: 24, 32: 25, 33: 26 // E, S, W, N, Wt, G, R
+    };
+    return STANDARD_TO_SANMA[norm] ?? -1;
+}
 export function getPonTiles(t: Tile): Tile[] {
     const norm = toNormalFive(t);
     if (isRedFive(t)) {
