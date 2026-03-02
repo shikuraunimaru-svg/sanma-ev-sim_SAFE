@@ -3,7 +3,7 @@ import type { Tile } from '../core/tile';
 import { getShantenBreakdown, calculateShanten as calculateShantenCore } from '../core/shanten';
 
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, findBestDiscard27, getUkeireCount27, getWinningTiles, initShantenCache, clearShantenCache, getShantenMemoized, shuffleInPlace, resetDebugCounters, getShantenBreakdown27, simpleHash } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, getWinningTiles, initShantenCache, clearShantenCache, getShantenMemoized, shuffleInPlace, resetDebugCounters, getShantenBreakdown27, simpleHash } = Engine;
 
 import type { SimulationConfig, Action, DiscardResult, SimulationSummary } from './engine';
 
@@ -21,7 +21,7 @@ function removeOneTile(hand: Tile[], tile: Tile): Tile[] {
     return copy;
 }
 
-const LOOKAHEAD_ENABLED = true;
+const LOOKAHEAD_ENABLED = false; // Flag to easily toggle lookahead on/off
 
 if (typeof self !== 'undefined') {
     self.onmessage = (e: MessageEvent) => {
@@ -43,9 +43,6 @@ export function runBatchSimulations(config: SimulationConfig) {
     resetDebugCounters();
 
     // Successive Elimination Constants
-    const LOOKAHEAD_ENABLED = true;
-    const TOP_K = 3;
-
     const { myHand, fixedMentsu, myKita, otherKita, doraIndicators, currentTurn, isDealer } = config;
 
     const initialShanten = calculateShanten(myHand, fixedMentsu.length);
@@ -232,127 +229,229 @@ export function runBatchSimulations(config: SimulationConfig) {
         res.tenpaiRate = res.tenpaiCount / res.trialCount;
         res.agariCount = res.wins;
         res.agariRate = res.winRate;
+        return result.point;
     };
 
-    // Ultimate Successive Elimination
-    const allCandidates = results.map(r => ({ ...r, m2: 0, ev: 0, trialCount: 0 }));
+    const simulateWithFixedMountain = (res: any, mountainArr: Uint8Array, seed: number) => {
+        const afterHand = res.action.type === 'discard' ? removeOneTile(myHand, res.action.tile) : myHand;
+        const result = runSinglePath(
+            afterHand, fixedMentsu, res.action, myKita, otherKita, doraIndicators,
+            currentTurn, isDealer, mountainArr, templateLen,
+            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+            seed, 0
+        );
+        return result.point;
+    };
+
+    const generateMountainWithSeed = (wall: Uint8Array, seed: number) => {
+        for (let i = 0; i < templateLen; i++) wall[i] = templateMountain[i];
+        let state = seed >>> 0;
+        const nextRand = () => {
+            let t = state += 0x6D2B79F5;
+            t = Math.imul(t ^ (t >>> 15), t | 1);
+            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        for (let i = templateLen - 1; i > 0; i--) {
+            const j = Math.floor(nextRand() * (i + 1));
+            const temp = wall[i];
+            wall[i] = wall[j];
+            wall[j] = temp;
+        }
+    };
+
+    // Ultimate Successive Elimination with Common Random Numbers (CRN)
+    const allCandidates = results.map(r => ({ ...r, m2: 0, ev: 0, trialCount: 0, lastTrialReward: 0 }));
     let activeCandidates = [...allCandidates];
-    let totalTrialsSoFar = 0;
-    const minSamples = 200;
 
     // Config based on hand state
     const isTenpai = (initialShanten === 0);
-    const epsilon = isTenpai ? 0.008 : 0.015;
-    const hardLimitPerCandidate = isTenpai ? 60000 : 30000;
-    const globalHardLimit = hardLimitPerCandidate * activeCandidates.length;
+    const epsilon = 0.000001; // isTenpai ? 0.008 : 0.015;
+    const globalHardLimit = isTenpai ? 60000 : 30000; // Total trials across the whole evaluation
 
-    console.log(`Ultimate SE Config: state=${isTenpai ? 'Tenpai' : 'Ishanten'}, epsilon=${epsilon}, hardLimit=${globalHardLimit}`);
+    console.log(`Ultimate CRN SE Config: state=${isTenpai ? 'Tenpai' : 'Ishanten'}, epsilon=${epsilon}, hardLimit=${globalHardLimit}`);
 
     const getZ = (n: number) => 1.96 + 0.1 * Math.log2(n || 1);
-
     let stopReason = "unknown";
-
+    let totalExecutions = 0;
     console.log(`[Trial Start] mountainSize: ${mountainSize} (Total Nuki: ${totalNukiCount})`);
 
-    // Phase 0: Initial uniform sampling
-    for (const candidate of activeCandidates) {
-        for (let i = 0; i < minSamples; i++) {
-            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = templateMountain[j];
-            shuffleInPlace(mountainBuffer, templateLen);
-            runSingleTrialForAction(candidate, mountainBuffer);
-            totalTrialsSoFar++;
-        }
+    const masterWall = new Uint8Array(136);
+    let diffStats = { mean: 0, sumSq: 0, n: 0, variance: 0 };
+
+    // === Budget control ===
+    const SR_BUDGET_RATIO = 0.35;   // SRは全体の35%まで
+    const SR_BUDGET_CAP = Math.floor(globalHardLimit * SR_BUDGET_RATIO);
+    let srUsedTrials = 0;
+
+    // SR Boundaries (Theoretical Successive Rejects Formula)
+    const initialK = activeCandidates.length;
+    const initialT = SR_BUDGET_CAP;
+    const H_K = Array.from({ length: initialK }, (_, i) => 1 / (i + 1)).reduce((a, b) => a + b, 0);
+
+    let remainingBudget = globalHardLimit;
+    let phaseTrialsLeft = Math.floor((Math.max(0, initialT - initialK) / H_K) * (1 / initialK));
+
+    if (srUsedTrials + phaseTrialsLeft > SR_BUDGET_CAP) {
+        phaseTrialsLeft = SR_BUDGET_CAP - srUsedTrials;
     }
 
-    while (totalTrialsSoFar < globalHardLimit && activeCandidates.length > 0) {
-        // 1. Sampling: Priority to max SE. Tenpai maintaining gets 1.2x weight.
-        let target = activeCandidates[0];
-        let maxWeightedSe = -1;
-        for (const c of activeCandidates) {
-            let weight = 1.0;
-            if (isTenpai && c.shantenAfter === 0) weight = 1.2;
-            const wSe = c.stdError * weight;
-            if (wSe > maxWeightedSe) {
-                maxWeightedSe = wSe;
-                target = c;
-            }
+    // ===== Phase 1: Successive Rejects =====
+    while (activeCandidates.length > 2 && remainingBudget > 0) {
+        // 1. Generate CRN Master Wall for this trial
+        for (let j = 0; j < templateLen; j++) masterWall[j] = templateMountain[j];
+        shuffleInPlace(masterWall, templateLen);
+
+        // 2. Evaluate all active candidates on the exact same wall
+        for (const candidate of activeCandidates) {
+            // Provide a clean copy of the master wall to prevent mutation side-effects
+            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
+            candidate.lastTrialReward = runSingleTrialForAction(candidate, mountainBuffer);
+            totalExecutions++;
         }
 
-        // Run trial
-        for (let j = 0; j < templateLen; j++) mountainBuffer[j] = templateMountain[j];
-        shuffleInPlace(mountainBuffer, templateLen);
-        runSingleTrialForAction(target, mountainBuffer);
-        totalTrialsSoFar++;
+        phaseTrialsLeft--;
+        remainingBudget--;
+        srUsedTrials++;
 
-        // Sync CI
-        const currentZ = getZ(activeCandidates.length);
-        for (const c of activeCandidates) {
-            c.ciLower = c.ev - currentZ * c.stdError;
-            c.ciUpper = c.ev + currentZ * c.stdError;
-        }
+        // 3. SR Phase Allocation Check
+        if (phaseTrialsLeft <= 0) {
+            console.log(`SR Phase complete. Remaining budget: ${remainingBudget}. Candidates before drop: ${activeCandidates.length}`);
+            activeCandidates.sort((a, b) => b.ev - a.ev);
+            const worst = activeCandidates.pop();
+            const actionType = worst?.action?.type;
+            const tileStr = (actionType === 'discard' && worst?.action?.tile !== undefined) ? tileToString(worst.action.tile) : actionType;
+            console.log(`Dropped worst candidate: ${tileStr} (ev: ${worst?.ev})`);
 
-        if (totalTrialsSoFar % 100 === 0) {
-            console.log("active:", activeCandidates.length, "trials:", totalTrialsSoFar);
-        }
-
-        if (activeCandidates.length <= 1) continue;
-
-        // 2. Evaluation
-        activeCandidates.sort((a, b) => b.ev - a.ev);
-        const best = activeCandidates[0];
-        const second = activeCandidates[1];
-
-        // Elimination Check
-        for (let i = activeCandidates.length - 1; i >= 1; i--) {
-            const c = activeCandidates[i];
-            if (isTenpai && c.shantenAfter > 0) {
-                // テンパイ崩しは保留
-                if (c.trialCount > 2 * minSamples && c.ciUpper < best.ciLower) {
-                    activeCandidates.splice(i, 1);
-                }
-            } else {
-                // 通常排除
-                if (c.trialCount > minSamples && c.ciUpper < best.ciLower) {
-                    activeCandidates.splice(i, 1);
-                }
-            }
-        }
-
-        if (best.trialCount > minSamples && second.trialCount > minSamples) {
-            const diff = best.ev - second.ev;
-
-            // Cond A: Separation
-            const combinedSE = Math.sqrt(best.stdError ** 2 + second.stdError ** 2);
-            let separated = false;
-            if (combinedSE < 1e-9) {
-                separated = diff > 0;
-            } else {
-                separated = diff > currentZ * combinedSE;
-            }
-
-            if (separated) {
-                stopReason = "CI_SEPARATED";
+            if (activeCandidates.length === 2) {
+                console.log("SR reached 2 candidates → ENTER DIFF MODE");
                 break;
             }
 
-            // Cond B: Relative Epsilon
-            const scale = Math.max(Math.abs(best.ev), Math.abs(second.ev), 1000);
-            const relativeDiff = Math.abs(diff) / scale;
-            if (relativeDiff < epsilon) {
-                stopReason = "RELATIVE_EPSILON";
+            const m = activeCandidates.length;
+            let trialsToAllocate = Math.floor((Math.max(0, initialT - initialK) / H_K) * (1 / m));
+
+            // --- SR budget cap enforcement ---
+            if (srUsedTrials + trialsToAllocate > SR_BUDGET_CAP) {
+                trialsToAllocate = SR_BUDGET_CAP - srUsedTrials;
+            }
+
+            if (trialsToAllocate <= 0) {
+                console.log(`SR budget cap reached → ENTER DIFF MODE (srUsed=${srUsedTrials}/${SR_BUDGET_CAP})`);
                 break;
             }
-        }
 
-        if (activeCandidates.length === 1) {
-            stopReason = "SINGLE_ARM";
-            break;
+            phaseTrialsLeft = trialsToAllocate;
+            console.log(`Next SR Phase trials allocated: ${phaseTrialsLeft}`);
         }
     }
 
-    if (totalTrialsSoFar >= globalHardLimit) {
+    if (remainingBudget <= 0 && activeCandidates.length > 2) {
         stopReason = "HARD_LIMIT";
-        console.log(`=== HARD LIMIT REACHED ===`);
+        console.log(`=== SR BUDGET DEPLETED ===`);
+    }
+
+    if (activeCandidates.length > 2) {
+        console.log(`[Safety] Forcing down to 2 candidates to enter DIFF MODE.`);
+        activeCandidates.sort((a, b) => b.ev - a.ev);
+        activeCandidates.length = 2;
+    }
+
+    // ===== Relative DIFF thresholds =====
+    const STRONG_RELATIVE = 0.05;  // 5%
+    const MID_RELATIVE = 0.03;  // 3%
+
+    const Z_STRONG = 2.33;  // 99% one-sided
+    const Z_MID = 1.64;  // 90% one-sided
+
+    const MIN_DIFF_TRIALS = 3500;
+
+    // ===== Phase 2: DIFF MODE =====
+    if (activeCandidates.length === 2 && remainingBudget > 0) {
+        console.log("DIFF MODE START");
+        diffStats = { n: 0, mean: 0, sumSq: 0, variance: 0 };
+        const baseSeed = Math.floor(Math.random() * 0xFFFFFFFF);
+
+        while (remainingBudget > 0) {
+            const [candidateA, candidateB] = activeCandidates;
+            const seed = (baseSeed + diffStats.n) >>> 0;
+
+            // 1. Generate CRN Master Wall for this trial (only once per loop)
+            generateMountainWithSeed(masterWall, seed);
+
+            // 2. Evaluate A
+            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
+            const rewardA = simulateWithFixedMountain(candidateA, mountainBuffer, seed);
+
+            // 3. Evaluate B (Same Master Wall, Same Seed)
+            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
+            const rewardB = simulateWithFixedMountain(candidateB, mountainBuffer, seed);
+
+            const diff = rewardA - rewardB;
+            diffStats.n++;
+            const delta = diff - diffStats.mean;
+            diffStats.mean += delta / diffStats.n;
+            const delta2 = diff - diffStats.mean;
+            diffStats.sumSq += delta * delta2;
+            diffStats.variance = diffStats.n > 1 ? diffStats.sumSq / (diffStats.n - 1) : 0;
+
+            if (diffStats.n > 1) {
+                const baseEV = Math.max(candidateA.ev, candidateB.ev);
+
+                if (baseEV <= 0) {
+                    // Safety guard for pathological states
+                    remainingBudget--;
+                    continue;
+                }
+
+                const meanDiff = diffStats.mean;
+                const variance = diffStats.variance;
+                const stdError = Math.sqrt(variance / diffStats.n);
+
+                // Strong confidence (99%)
+                const lcbStrong = meanDiff - Z_STRONG * stdError;
+                const relativeLCBStrong = lcbStrong / baseEV;
+
+                // Medium confidence (90%)
+                const lcbMid = meanDiff - Z_MID * stdError;
+                const relativeLCBMid = lcbMid / baseEV;
+
+                // Relative mean
+                const relativeMean = meanDiff / baseEV;
+
+                if (diffStats.n % 200 === 0) {
+                    console.log(`DIFF_STATS n: ${diffStats.n} mean: ${meanDiff.toFixed(2)} relMidLCB: ${(relativeLCBMid * 100).toFixed(2)}%`);
+                }
+
+                // === STRONG ZONE (≥5%) ===
+                if (relativeLCBStrong > STRONG_RELATIVE) {
+                    stopReason = "STRONG_WIN";
+                    console.log("=== DIFF END: STRONG_WIN (≥5%) ===");
+                    break;
+                }
+
+                // === MID ZONE (3–5%) ===
+                if (relativeLCBMid > MID_RELATIVE) {
+                    stopReason = "MID_WIN";
+                    console.log("=== DIFF END: MID_WIN (≥3%) ===");
+                    break;
+                }
+
+                // === SMALL DIFF STOP (<3%) ===
+                if (diffStats.n >= MIN_DIFF_TRIALS && Math.abs(relativeMean) < MID_RELATIVE) {
+                    stopReason = "SMALL_DIFF_STOP";
+                    console.log("=== DIFF END: SMALL_DIFF_STOP (<3%) ===");
+                    break;
+                }
+            }
+
+            remainingBudget--;
+        }
+
+        if (remainingBudget <= 0 && stopReason !== "STRONG_WIN" && stopReason !== "MID_WIN" && stopReason !== "SMALL_DIFF_STOP") {
+            stopReason = "HARD_LIMIT";
+            console.log(`=== DIFF BUDGET DEPLETED ===`);
+        }
     }
 
     // Result Determination: Calculate final bounds
@@ -374,7 +473,6 @@ export function runBatchSimulations(config: SimulationConfig) {
 
     console.log(`=== UNIFIED SE END: ${stopReason} ===`);
     console.log(`State: ${isTenpai ? 'Tenpai' : 'Ishanten'}`);
-    console.log(`Trials: ${totalTrialsSoFar}`);
     console.log(`Best: ${winner.ev.toFixed(1)} (LCB: ${(winner.lcb ?? 0).toFixed(1)}, n=${winner.trialCount})`);
     if (runnerUp) console.log(`Second: ${runnerUp.ev.toFixed(1)} (LCB: ${(runnerUp.lcb ?? 0).toFixed(1)}, n=${runnerUp.trialCount})`);
 

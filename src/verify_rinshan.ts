@@ -15,25 +15,27 @@ function testRinshan() {
     ];
 
     const liveWall = [TILES.z1];
-    const deadWall = [TILES.s4];
-
-    console.log("\n--- Case 1: Kita-nuki -> Rinshan Kaihou ---");
-
-    const score = runSinglePath(
+    const result = runSinglePath(
         handCorrect,
         [],
         { type: 'kita' }, // Initial action is Kita-nuki
-        liveWall,
-        deadWall,
-        0,
-        [TILES.p9],
-        0,
-        true,
-        true // debugLog
+        0, // myKita
+        0, // otherKita
+        [TILES.p9], // doraInds
+        0, // currentTurn
+        true, // isDealer
+        new Uint8Array(liveWall),
+        liveWall.length,
+        new Uint8Array(29), // templateCounts
+        new Int8Array(29),  // trialCounts
+        new Int8Array(27),  // counts27
+        new Int8Array(29),  // workUraCounts
+        12345, // seed
+        0 // tenpaiDepth
     );
 
-    if (score.type === 'win' && Math.max(0, score.point) > 0) {
-        console.log("✅ Rinshan win detected! Score:", score.point);
+    if (result.type === 'win' && Math.max(0, result.point) > 0) {
+        console.log("✅ Rinshan win detected! Score:", result.point);
     } else {
         console.log("❌ Rinshan win NOT detected.");
     }

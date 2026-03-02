@@ -489,7 +489,6 @@ export function runSinglePath(
 
 
     let isRiichi = (initialAction.type === 'discard' || initialAction.type === 'ankan') ? !!initialAction.riichi : false;
-    const disableAutoRiichi = (initialAction.type === 'discard' && !initialAction.riichi);
 
     let isDoubleRiichi = false;
     let isIppatsu = false;
@@ -570,6 +569,21 @@ export function runSinglePath(
     const isValidWin = (result: YakuResult) => validateAgari(result);
 
 
+    interface RiichiDecisionState {
+        isMenzen: boolean;
+        hasDeclaredRiichi: boolean;
+        remainingDraws: number;
+    }
+
+    function shouldDeclareRiichi(state: RiichiDecisionState): boolean {
+        if (!state.isMenzen) return false;
+        if (state.hasDeclaredRiichi) return false;
+        if (state.remainingDraws <= 0) return false;
+
+        // 今は常時リーチ（将来拡張余地あり）
+        return true;
+    }
+
     const performGreedyDiscard = (tenpaiDepth: number): boolean => {
         const bestDiscardS27 = findBestDiscard27(hand27, localFixedMentsu.length, trialCounts, rng, tenpaiDepth);
 
@@ -590,12 +604,21 @@ export function runSinglePath(
             return false;
         }
 
-        if (disableAutoRiichi) return true;
         shantenCalcCallCount++;
-        if (localFixedMentsu.length === 0 && !isRiichi && getShantenMemoized(hand27 as any, 0) === 0) {
-            isRiichi = true;
-            isIppatsu = true;
-            scoreAdjustment -= 1000;
+        const currentShanten = getShantenMemoized(hand27 as any, localFixedMentsu.length);
+
+        if (currentShanten === 0 && !isRiichi) {
+            const riichiState: RiichiDecisionState = {
+                isMenzen: localFixedMentsu.length === 0,
+                hasDeclaredRiichi: isRiichi,
+                remainingDraws: liveWallLimit - mountainPtr
+            };
+
+            if (shouldDeclareRiichi(riichiState)) {
+                isRiichi = true;
+                isIppatsu = true;
+                scoreAdjustment -= 1000;
+            }
         }
         return true;
     };

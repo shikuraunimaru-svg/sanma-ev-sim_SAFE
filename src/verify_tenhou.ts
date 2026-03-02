@@ -13,6 +13,8 @@ const configDealerStart = {
     myDiscards: [],
     doraIndicators: [TILES.m9],
     kitaCount: 0,
+    myKita: 0,
+    otherKita: 0,
     northRemaining: 4,
     trials: 1,
     currentTurn: 1,
@@ -31,6 +33,8 @@ const configNonDealerFirstDraw = {
     myDiscards: [],
     doraIndicators: [TILES.m9],
     kitaCount: 0,
+    myKita: 0,
+    otherKita: 0,
     northRemaining: 4,
     trials: 1,
     currentTurn: 1, // First draw for non-dealer
@@ -40,6 +44,8 @@ const configNonDealerFirstDraw = {
 const configWithKita = {
     ...configDealerStart,
     kitaCount: 1,
+    myKita: 1,
+    otherKita: 0
 };
 
 function test() {
@@ -64,7 +70,7 @@ function test() {
     }
 
     console.log("\n--- Case 3: Dealer with Kita (Should NOT be Tenhou) ---");
-    const res3 = evaluateWinningHand(configWithKita.myHand, configWithKita);
+    const res3 = evaluateWinningHand(configWithKita.myHand, configWithKita as any);
     if (res3 && res3.bestYaku.yaku.includes("天和")) {
         console.log("❌ Tenhou detected (ERROR: should be invalid after Kita).");
     } else {
