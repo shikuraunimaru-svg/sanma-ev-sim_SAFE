@@ -1,6 +1,17 @@
-import { TILE_COUNT, toNormalFive } from './tile';
+import { toNormalFive } from './tile';
 import type { Tile } from './tile';
 import { SANMA_TILE_COUNT, toStandardTile, toSanmaTile } from './sanmaTiles';
+
+/**
+ * 27-ID (Sanma) Dictionary:
+ * 0: 1m
+ * 1: 9m
+ * 2-10: pinzu
+ * 11-19: souzu
+ * 20-26: zihai
+ * All calculations in this file MUST use exactly this 27-ID system.
+ * 34-ID (0-33) is strictly prohibited to maintain 1m/9m symmetry.
+ */
 
 // Shanten calculator
 // Returns -1 for Agari, 0 for Tenpai, >0 for Shanten
@@ -53,13 +64,13 @@ export function getShantenBreakdown(hand: Tile[], fixedMentsuCount: number = 0) 
 }
 
 // Internal function requiring 27-array
-export function getShantenBreakdown27(counts: number[], fixedMentsuCount: number): { normal: number, chiitoi: number, kokushi: number } {
+export function getShantenBreakdown27(counts: number[], fixedMentsuCount: number, logTile?: string): { normal: number, chiitoi: number, kokushi: number } {
     const normal = calculateNormalShanten(counts, fixedMentsuCount);
     let chiitoi = 99;
     let kokushi = 99;
 
     if (fixedMentsuCount === 0) {
-        chiitoi = calculateChiitoitsuShanten(counts);
+        chiitoi = calculateChiitoitsuShanten(counts, logTile);
         kokushi = calculateKokushiShanten(counts);
     }
 
@@ -274,6 +285,29 @@ export function getAgariPatterns(hand: Tile[], fixedMentsu: Mentsu[] = []): Hand
 
     const results: HandStructure[] = [];
 
+    // Check Normal
+    // For normal patterns, we need to decompose the PRIVATE hand into (4 - fixed) mentsu + 1 head.
+    const targetMentsuCount = 4 - fixedMentsu.length;
+
+    // Iterate over possible heads (0 to 26 for Sanma)
+    for (let i = 0; i < SANMA_TILE_COUNT; i++) {
+        if (counts[i] >= 2) {
+            counts[i] -= 2;
+
+            const mentsuFound: Mentsu[][] = [];
+            searchMentsuDecomposition(counts, [], mentsuFound);
+
+            for (const m of mentsuFound) {
+                if (m.length === targetMentsuCount) {
+                    const combined = [...fixedMentsu, ...m];
+                    results.push({ head: toStandardTile(i) as Tile, mentsu: combined });
+                }
+            }
+
+            counts[i] += 2;
+        }
+    }
+
     // Check Chiitoitsu
     if (isMenzen) {
         const chiitoi = getChiitoitsuStructure(counts);
@@ -286,57 +320,63 @@ export function getAgariPatterns(hand: Tile[], fixedMentsu: Mentsu[] = []): Hand
         if (kokushi) results.push(kokushi);
     }
 
-    // Check Normal
-    // For normal patterns, we need to decompose the PRIVATE hand into (4 - fixed) mentsu + 1 head.
-    const targetMentsuCount = 4 - fixedMentsu.length;
-
-    // Iterate over possible heads
-    for (let i = 0; i < TILE_COUNT; i++) {
-        if (counts[i] >= 2) {
-            counts[i] -= 2;
-
-            const mentsuFound: Mentsu[][] = [];
-            // We use searchMentsuDecomposition to find all combinations of the remaining tiles.
-            searchMentsuDecomposition(counts, [], mentsuFound);
-
-            for (const m of mentsuFound) {
-                if (m.length === targetMentsuCount) {
-                    // Combine with fixedMentsu
-                    const combined = [...fixedMentsu, ...m];
-                    results.push({ head: toStandardTile(i) as Tile, mentsu: combined });
-                }
-            }
-
-            counts[i] += 2;
-        }
-    }
+    // Duplicate Normal block removed.
 
     return results;
 }
 
-export function calculateChiitoitsuShanten(counts: number[]): number {
-    let pairs = 0;
-    for (let i = 0; i < TILE_COUNT; i++) {
-        if (counts[i] >= 2) pairs++;
+export function calculateChiitoitsuShanten(counts: number[], logTile?: string): number {
+    let pairCount = 0;
+    let singleCount = 0;
+    let tripleCount = 0;
+
+    // RULE: Evaluate full array without early break
+    for (let i = 0; i < SANMA_TILE_COUNT; i++) {
+        const c = counts[i];
+        if (c === 1) {
+            singleCount++;
+        } else if (c === 2) {
+            pairCount++;
+        } else if (c === 3) {
+            pairCount++;
+            singleCount++;
+            tripleCount++;
+        } else if (c === 4) {
+            pairCount++;
+        }
     }
-    return 6 - pairs;
+
+    if (logTile) {
+        console.log("CHIITOI_COUNT", logTile, pairCount, singleCount, tripleCount);
+    }
+
+    let shanten = 6 - pairCount;
+    // ensure unique requirements
+    const types = pairCount + singleCount;
+    if (types < 7) {
+        shanten += (7 - types);
+    }
+
+    return shanten;
 }
 
 function getChiitoitsuStructure(counts: number[]): HandStructure | null {
-    let pairs = 0;
+    let pairCount = 0;
     let hasFour = false;
-    for (let i = 0; i < TILE_COUNT; i++) {
-        if (counts[i] === 2) pairs++;
-        if (counts[i] === 4) hasFour = true;
+    for (let i = 0; i < SANMA_TILE_COUNT; i++) {
+        if (counts[i] === 2) pairCount++;
+        else if (counts[i] === 3) pairCount++;
+        else if (counts[i] === 4) hasFour = true;
     }
-    if (pairs === 7 && !hasFour) {
+    if (pairCount === 7 && !hasFour) {
         const allPairs: Mentsu[] = [];
-        for (let i = 0; i < TILE_COUNT; i++) {
-            if (counts[i] === 2) {
+        for (let i = 0; i < SANMA_TILE_COUNT; i++) {
+            if (counts[i] === 2 || counts[i] === 3) {
+                const stdTile = toStandardTile(i) as Tile;
                 allPairs.push({
                     type: 'pair',
-                    tile: i as Tile,
-                    tiles: [i as Tile, i as Tile],
+                    tile: stdTile,
+                    tiles: [stdTile, stdTile],
                     isOpen: false,
                     isKan: false
                 });
@@ -348,7 +388,7 @@ function getChiitoitsuStructure(counts: number[]): HandStructure | null {
 }
 
 function getKokushiStructure(counts: number[]): HandStructure | null {
-    const yaochuu = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33];
+    const yaochuu = [0, 1, 2, 10, 11, 19, 20, 21, 22, 23, 24, 25, 26];
     let hasPair = false;
     let uniqueCount = 0;
     for (const t of yaochuu) {
