@@ -61,7 +61,7 @@ export function ResultHeader({ hand, fixedMentsu, doraIndicators, kitaCount, exe
                 <div className="flex flex-col gap-1 border-t border-gray-100 pt-2 text-sm text-gray-600">
                     <div className="flex items-center gap-1">
                         <span className="font-bold">残り山枚数：</span>
-                        <span>{summary.remainingTiles}枚</span>
+                        <span>{summary.displayRemainingTiles}枚</span>
                     </div>
                     <div className="flex items-center gap-1 flex-wrap">
                         <span className="font-bold">向聴数：</span>

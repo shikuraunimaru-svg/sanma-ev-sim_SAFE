@@ -6,6 +6,7 @@ type Props = {
 };
 
 export function ResultsTable({ results }: Props) {
+    // Ultimate Successive Elimination with Common Random Numbers (CRN)
     // Sort by EV desc
     const sorted = [...results].sort((a, b) => b.ev - a.ev);
     const best = sorted[0];
@@ -79,7 +80,14 @@ export function ResultsTable({ results }: Props) {
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
-                                    {(res.winRate * 100).toFixed(2)}%
+                                    <div className="flex flex-col">
+                                        <div>{(res.winRate * 100).toFixed(2)}%</div>
+                                        {res.reachedDiff && res.averageAgariAfterTurns !== null && res.averageAgariAfterTurns !== undefined && (
+                                            <div className="text-[0.8em] text-blue-500 font-medium">
+                                                (平均 {res.averageAgariAfterTurns.toFixed(1)} 巡後)
+                                            </div>
+                                        )}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
                                     {Math.round(res.avgScore).toLocaleString()}

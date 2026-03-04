@@ -8,10 +8,14 @@ import { TileDisplay } from './components/TileDisplay';
 import { MentsuDisplay } from './components/MentsuDisplay';
 import { type Tile, TILES } from './core/tile';
 import type { Mentsu } from './core/shanten';
-import { type SimulationConfig, type DiscardResult, evaluateWinningHand } from './simulation/engine';
+import {
+  type SimulationConfig, type DiscardResult, evaluateWinningHand,
+  createSummary,
+  getPlayableWallCount,
+} from "./simulation/engine";
 import type { YakuResult } from './core/yaku';
 import type { ScoreResult } from './core/score';
-import { calculateShanten, getShantenBreakdown } from './core/shanten';
+import { calculateShanten } from './core/shanten';
 
 export default function App() {
   const [hand, setHand] = useState<Tile[]>([]);
@@ -131,17 +135,39 @@ export default function App() {
     setCsvReport(undefined);
     setIsAgariMode(false);
 
+    // Calculate selfEffectiveWallCount for config
+    const myKanCount = fixedMentsu.filter(m => m.isKan || m.type === 'kantsu').length;
+    // --- 三麻 山枚数確定計算 (Phase 57 確定版) ---
+    const TOTAL_WALL = 108;
+    const DEAD_WALL_TOTAL = 14;
+
+    const playerHandCount = hand.length + (fixedMentsu.length * 4); // 暗槓は4枚消費
+    const doraIndicatorCount = doraIndicators.length;
+    const totalNukiCount = myKita + otherKita;
+
+    const wallAfterVisibleRemoval = TOTAL_WALL - playerHandCount - doraIndicatorCount - totalNukiCount;
+    const drawsConsumed = (currentTurn - 1) * 3;
+    const remainingWall = wallAfterVisibleRemoval - drawsConsumed;
+    const deadWallEffectiveCount = DEAD_WALL_TOTAL - doraIndicatorCount;
+    const liveWallLimit = remainingWall - deadWallEffectiveCount;
+    const availableToPlayer = liveWallLimit - 26;
+
+    const selfEffectiveWallCount = Math.max(0, availableToPlayer);
+
     const config: SimulationConfig = {
       myHand: hand,
       fixedMentsu: fixedMentsu,
-      myDiscards: [], // TODO: Add input if needed
+      myDiscards: [],
       doraIndicators,
       myKita,
       otherKita,
       trials: 5000,
       currentTurn,
       isDealer: true,
-      validationMode
+      selfEffectiveWallCount,
+      liveWallLimit, // Add this
+      myKanCount,
+      validationMode,
     };
 
     // Check if hand is already winning
@@ -150,15 +176,8 @@ export default function App() {
       const winData = evaluateWinningHand(hand, config);
       if (winData) {
         setWinResult(winData);
-        const breakdown = getShantenBreakdown(hand, fixedMentsu.length);
-        setSimulationSummary({
-          remainingTiles: 108,
-          shanten: {
-            normal: breakdown.normal,
-            chiitoi: breakdown.chiitoi,
-            kokushi: breakdown.kokushi
-          }
-        });
+        const playable = getPlayableWallCount(config);
+        setSimulationSummary(createSummary(config, playable));
         setIsAgariMode(true);
         setIsSimulating(false);
         return;

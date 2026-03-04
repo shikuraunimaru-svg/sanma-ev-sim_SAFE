@@ -3,7 +3,7 @@ import type { Tile } from '../core/tile';
 import { getShantenBreakdown, calculateShanten as calculateShantenCore } from '../core/shanten';
 
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, getWinningTiles, initShantenCache, clearShantenCache, getShantenMemoized, shuffleInPlace, resetDebugCounters, getShantenBreakdown27, simpleHash } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, getWinningTiles, initShantenCache, clearShantenCache, getShantenMemoized, shuffleInPlace, resetDebugCounters, getShantenBreakdown27, simpleHash, createSummary, getPlayableWallCount } = Engine;
 
 import type { SimulationConfig, Action, DiscardResult, SimulationSummary } from './engine';
 
@@ -44,7 +44,7 @@ export function runBatchSimulations(config: SimulationConfig) {
 
     // Successive Elimination Constants
     const { myHand, fixedMentsu, myKita, otherKita, doraIndicators, currentTurn, isDealer } = config;
-
+    const myKanCount = fixedMentsu.filter((m: any) => m.isKan || m.type === 'kantsu').length;
     const initialShanten = calculateShanten(myHand, fixedMentsu.length);
     if (initialShanten === -1) {
         const winResult = evaluateWinningHand(myHand, config);
@@ -66,41 +66,116 @@ export function runBatchSimulations(config: SimulationConfig) {
 
     const visible: Tile[] = [
         ...config.myHand,
-        ...config.myDiscards,
         ...config.doraIndicators
     ];
     for (const m of config.fixedMentsu) visible.push(...m.tiles);
+    for (const m of config.otherOpenMelds ?? []) visible.push(...m.tiles);
+
+    const totalKitaCount = myKita + otherKita;
+    for (let i = 0; i < totalKitaCount; i++) visible.push(Engine.TILES.z4);
 
     const templateCounts = getInitialCounts();
+    let baseWall: number[] = [];
+    for (let i = 0; i < templateCounts.length; i++) {
+        for (let j = 0; j < templateCounts[i]; j++) {
+            baseWall.push(i);
+        }
+    }
+
+    console.log("SANMA_WALL_GENERATED", { wallLength: baseWall.length });
+    if (baseWall.length !== 108) {
+        throw new Error("SANMA_WALL_ERROR: wall must be 108 tiles");
+    }
+
     for (const t of visible) {
         const idx = TILE_TYPES.indexOf(t);
-        if (idx !== -1 && templateCounts[idx] > 0) templateCounts[idx]--;
+        const pos = baseWall.indexOf(idx);
+        if (pos === -1) {
+            throw new Error(`SANMA_WALL_ERROR: visible tile ${t} not found in wall`);
+        }
+        baseWall.splice(pos, 1);
+        // Sync counts for engine's effective tile analysis
+        if (templateCounts[idx] > 0) templateCounts[idx]--;
     }
-    const northIdx = TILE_TYPES.indexOf(Engine.TILES.z4);
-    templateCounts[northIdx] = Math.max(0, templateCounts[northIdx] - (myKita + otherKita));
 
-    const templateMountain = new Uint8Array(136);
-    let mIdx = 0;
-    for (let i = 0; i < 29; i++) {
-        const c = templateCounts[i];
-        for (let j = 0; j < c; j++) templateMountain[mIdx++] = i;
+    console.log("POST_SPLICE_LENGTH", baseWall.length);
+    console.log("SANMA_WALL_AFTER_REMOVAL", { wallLengthAfterRemoval: baseWall.length });
+
+    const drawsConsumed = Math.max(0, (currentTurn - 1) * 3);
+    const totalConsumption = drawsConsumed;
+
+    // Shuffle BEFORE consumption to ensure counts are reduced by random wall tiles
+    for (let i = baseWall.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const temp = baseWall[i];
+        baseWall[i] = baseWall[j];
+        baseWall[j] = temp;
     }
-    const templateLen = mIdx;
 
-    const TOTAL_TILES = 108;
-    const playerHandCount = 14;
-    const otherHandsCount = 26;
-    const deadWallCount = 14;
-    const totalNukiCount = myKita + otherKita;
-
-    const expectedMountainSize = TOTAL_TILES - playerHandCount - otherHandsCount - deadWallCount - totalNukiCount;
-    // The usable mountain size (live wall)
-    const mountainSize = expectedMountainSize;
-
-    if (mountainSize !== expectedMountainSize) {
-        console.error("MOUNTAIN SIZE MISMATCH", mountainSize, expectedMountainSize);
-        throw new Error("Mountain size mismatch");
+    // Consume from both wall and counts
+    for (let i = 0; i < totalConsumption; i++) {
+        if (baseWall.length > 0) {
+            const tileIdx = baseWall.pop()!;
+            if (templateCounts[tileIdx] > 0) {
+                templateCounts[tileIdx]--;
+            } else {
+                console.warn("COUNT_UNDERFLOW_DETECTED", tileIdx);
+            }
+        }
     }
+
+    // --- 三麻 山枚数確定計算 (Phase 57-B 確定版) ---
+    const TOTAL_WALL = 108;
+    const DEAD_WALL_TOTAL = 14;
+
+    // ① 可視削除 (playerHandCount は 15枚相当: config.myHand + config.fixedMentsu.length * 4)
+    const playerHandCount = config.myHand.length + (config.fixedMentsu.length * 4);
+    const doraIndicatorCount = config.doraIndicators.length;
+    const totalNukiCount = config.myKita + config.otherKita;
+
+    const wallAfterVisibleRemoval =
+        TOTAL_WALL
+        - playerHandCount
+        - doraIndicatorCount
+        - totalNukiCount;
+
+    // ② 巡目消費 (already declared at line 104)
+
+    console.log("TURN_DEBUG", {
+        currentTurn: config.currentTurn,
+        drawsConsumed
+    });
+
+    // ③ 巡目後山
+    const remainingWall = wallAfterVisibleRemoval - drawsConsumed;
+
+    // ④ 王牌有効枚数 (絶対仕様: 14固定にしない)
+    const deadWallEffectiveCount = DEAD_WALL_TOTAL - doraIndicatorCount;
+
+    // ⑤ ライブ山
+    const liveWallLimit = remainingWall - deadWallEffectiveCount;
+
+    // ⑥ 他家分を差し引き (13枚 * 2人)
+    const availableToPlayer = liveWallLimit - 26;
+
+    console.log("SANMA_WALL_FINAL_CHECK", {
+        remainingWall,
+        deadWallEffectiveCount,
+        liveWallLimit,
+        availableToPlayer
+    });
+
+    const selfEffectiveWallCount = availableToPlayer;
+
+    const templateMountain = new Uint8Array(baseWall);
+    const templateLen = templateMountain.length;
+    const mountainSize = templateLen; // For logging backwards compatibility in index calls
+
+    const theoreticalLiveWall = Math.max(0, templateMountain.length - 13);
+    console.log("PRE_ENGINE_WALL_STATE", {
+        templateLength: templateMountain.length,
+        theoreticalLiveWall
+    });
 
 
 
@@ -150,7 +225,8 @@ export function runBatchSimulations(config: SimulationConfig) {
             trialCount: 0, previousMeanEV: 0, stableCount: 0, converged: false,
             totalScore: 0, totalScore2: 0, totalWinPoints: 0, wins: 0, tenpaiCount: 0,
             layerA_totalScore: 0, layerB_totalScore: 0, layerA_trials: 0, layerB_trials: 0,
-            stdError: 0, confidence95: 0, m2: 0, ciLower: 0, ciUpper: 0
+            stdError: 0, confidence95: 0, m2: 0, ciLower: 0, ciUpper: 0,
+            reachedDiff: false, totalAgariTurnSum: 0, agariCount: 0, averageAgariTurn: null
         } as any;
     });
 
@@ -197,7 +273,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         }
     };
 
-    const mountainBuffer = new Uint8Array(136);
+    const mountainBuffer = new Uint8Array(templateLen);
     const workTrialCounts = new Int8Array(29);
     const workHand27 = new Int8Array(27);
     const workUraCounts = new Int8Array(29);
@@ -211,11 +287,19 @@ export function runBatchSimulations(config: SimulationConfig) {
 
         const result = runSinglePath(
             afterHand, fixedMentsu, res.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, mountainArr, templateLen,
+            currentTurn, isDealer, mountainArr, templateLen, liveWallLimit, selfEffectiveWallCount,
             templateCounts as any, workTrialCounts, workHand27, workUraCounts,
             seed, 0 // Start with tenpaiDepth 0
         );
-        if (res.trialCount === 0) res.initialRemainingTiles = result.initialRemainingTiles;
+        if (res.trialCount === 0) {
+            res.initialRemainingTiles = result.initialRemainingTiles;
+            if (result.engineLiveWallLimit !== liveWallLimit) {
+                console.error("LIVE_WALL_SYNC_ERROR", {
+                    worker: liveWallLimit,
+                    engine: result.engineLiveWallLimit
+                });
+            }
+        }
 
         updateStats(res, result.point);
         if (result.type === 'win') {
@@ -227,24 +311,23 @@ export function runBatchSimulations(config: SimulationConfig) {
         res.winRate = res.wins / res.trialCount;
         res.avgScore = res.wins > 0 ? res.totalWinPoints / res.wins : 0;
         res.tenpaiRate = res.tenpaiCount / res.trialCount;
-        res.agariCount = res.wins;
         res.agariRate = res.winRate;
-        return result.point;
+        return result;
     };
 
     const simulateWithFixedMountain = (res: any, mountainArr: Uint8Array, seed: number) => {
         const afterHand = res.action.type === 'discard' ? removeOneTile(myHand, res.action.tile) : myHand;
         const result = runSinglePath(
             afterHand, fixedMentsu, res.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, mountainArr, templateLen,
+            currentTurn, isDealer, mountainArr, templateLen, liveWallLimit, selfEffectiveWallCount,
             templateCounts as any, workTrialCounts, workHand27, workUraCounts,
             seed, 0
         );
-        return result.point;
+        return result;
     };
 
     const generateMountainWithSeed = (wall: Uint8Array, seed: number) => {
-        for (let i = 0; i < templateLen; i++) wall[i] = templateMountain[i];
+        for (let i = 0; i < wall.length; i++) wall[i] = templateMountain[i];
         let state = seed >>> 0;
         const nextRand = () => {
             let t = state += 0x6D2B79F5;
@@ -252,7 +335,7 @@ export function runBatchSimulations(config: SimulationConfig) {
             t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
             return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
-        for (let i = templateLen - 1; i > 0; i--) {
+        for (let i = wall.length - 1; i > 0; i--) {
             const j = Math.floor(nextRand() * (i + 1));
             const temp = wall[i];
             wall[i] = wall[j];
@@ -274,9 +357,10 @@ export function runBatchSimulations(config: SimulationConfig) {
     const getZ = (n: number) => 1.96 + 0.1 * Math.log2(n || 1);
     let stopReason = "unknown";
     let totalExecutions = 0;
-    console.log(`[Trial Start] mountainSize: ${mountainSize} (Total Nuki: ${totalNukiCount})`);
+    console.log(`[Trial Start] mountainSize: ${mountainSize} (Total Nuki: ${totalKitaCount})`);
 
-    const masterWall = new Uint8Array(136);
+    const masterWall = new Uint8Array(templateLen);
+    console.log("SANMA_FINAL_WALL_LENGTH", masterWall.length);
     let diffStats = { mean: 0, sumSq: 0, n: 0, variance: 0 };
 
     // === Budget control ===
@@ -300,13 +384,16 @@ export function runBatchSimulations(config: SimulationConfig) {
     while (activeCandidates.length > 2 && remainingBudget > 0) {
         // 1. Generate CRN Master Wall for this trial
         for (let j = 0; j < templateLen; j++) masterWall[j] = templateMountain[j];
-        shuffleInPlace(masterWall, templateLen);
+        shuffleInPlace(masterWall, masterWall.length);
 
         // 2. Evaluate all active candidates on the exact same wall
         for (const candidate of activeCandidates) {
             // Provide a clean copy of the master wall to prevent mutation side-effects
             for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
-            candidate.lastTrialReward = runSingleTrialForAction(candidate, mountainBuffer);
+            const pathResult = runSingleTrialForAction(candidate, mountainBuffer);
+            candidate.lastTrialReward = pathResult.point;
+            candidate.totalAgariTurnSum += pathResult.totalAgariTurnSum;
+            candidate.agariCount += pathResult.agariCount;
             totalExecutions++;
         }
 
@@ -369,6 +456,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     // ===== Phase 2: DIFF MODE =====
     if (activeCandidates.length === 2 && remainingBudget > 0) {
         console.log("DIFF MODE START");
+        activeCandidates.forEach(c => c.reachedDiff = true);
         diffStats = { n: 0, mean: 0, sumSq: 0, variance: 0 };
         const baseSeed = Math.floor(Math.random() * 0xFFFFFFFF);
 
@@ -381,11 +469,17 @@ export function runBatchSimulations(config: SimulationConfig) {
 
             // 2. Evaluate A
             for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
-            const rewardA = simulateWithFixedMountain(candidateA, mountainBuffer, seed);
+            const resA = simulateWithFixedMountain(candidateA, mountainBuffer, seed);
+            const rewardA = resA.point;
+            candidateA.totalAgariTurnSum += resA.totalAgariTurnSum;
+            candidateA.agariCount += resA.agariCount;
 
             // 3. Evaluate B (Same Master Wall, Same Seed)
             for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
-            const rewardB = simulateWithFixedMountain(candidateB, mountainBuffer, seed);
+            const resB = simulateWithFixedMountain(candidateB, mountainBuffer, seed);
+            const rewardB = resB.point;
+            candidateB.totalAgariTurnSum += resB.totalAgariTurnSum;
+            candidateB.agariCount += resB.agariCount;
 
             const diff = rewardA - rewardB;
             diffStats.n++;
@@ -479,6 +573,27 @@ export function runBatchSimulations(config: SimulationConfig) {
     const endTime = performance.now();
     const summary = createSummary(config, winner.initialRemainingTiles, endTime - startTime);
 
+    // ===============================
+    // Finalize average agari turn
+    // ===============================
+    for (const c of allCandidates) {
+        if (c.agariCount > 0) {
+            c.averageAgariTurn = c.totalAgariTurnSum / c.agariCount;
+            c.averageAgariAfterTurns = c.averageAgariTurn - config.currentTurn;
+        } else {
+            c.averageAgariTurn = null;
+            c.averageAgariAfterTurns = null;
+        }
+    }
+
+    console.log("FINAL_AVG_DEBUG",
+        allCandidates.map(c => ({
+            tile: (c.action as any).tile ? tileToString((c.action as any).tile) : c.action.type,
+            agariCount: c.agariCount,
+            avgTurn: c.averageAgariTurn
+        }))
+    );
+
     const processedResults = allCandidates.map((r: any) => {
         const handAfter = r.action.type === 'discard' ? removeOneTile(myHand, r.action.tile) : myHand;
         return {
@@ -487,7 +602,8 @@ export function runBatchSimulations(config: SimulationConfig) {
             evMean: r.ev,
             confidence95: r.confidence95,
             agariCount: r.wins,
-            agariRate: r.trialCount > 0 ? (r.wins / r.trialCount) : 0
+            agariRate: r.trialCount > 0 ? (r.wins / r.trialCount) : 0,
+            averageAgariAfterTurns: r.averageAgariAfterTurns
         };
     });
 
@@ -523,16 +639,59 @@ function calculateEffectiveTiles(hand: Tile[], fixedMentsuCount: number, visible
 function getPossibleActions(config: SimulationConfig): Action[] {
     const actions: Action[] = [];
     const hand = config.myHand;
-    if (hand.length % 3 === 2 && calculateShanten(hand, config.fixedMentsu.length) === -1) actions.push({ type: 'tsumo' });
-    for (const tile of Array.from(new Set(hand))) {
-        actions.push({ type: 'discard', tile });
-        if (config.fixedMentsu.length === 0 && calculateShanten(removeOneTile(hand, tile), 0) === 0) actions.push({ type: 'discard', tile, riichi: true });
+
+    // In Sanma EV Simulator, melds might have type: 'pon' | 'chi' | 'kan_open' | 'kan_closed' (ankan).
+    // Ankan is Menzen.
+    const isMenzen = config.fixedMentsu.every(m => {
+        const type = (m as any).type;
+        if (type === 'pon' || type === 'chi' || type === 'kan_open') return false;
+        if (type === 'kan_closed') return true;
+        return !m.isOpen;
+    });
+
+    // Shanten normalization: calculate shanten on a 14-tile equivalent hand.
+    const shantenHand = hand.length % 3 === 0 ? hand.slice(0, hand.length - 1) : hand;
+    const shanten = calculateShanten(shantenHand, config.fixedMentsu.length);
+
+    console.log("RIICHI_CHECK", {
+        shanten,
+        isMenzen,
+        handLength: hand.length,
+        fixedMentsuCount: config.fixedMentsu.length
+    });
+
+    if (hand.length % 3 === 2 && shanten === -1) actions.push({ type: 'tsumo' });
+
+    // 重複候補修正 (Phase 57-D): Map を使用した完全排除
+    const tileIndCounts = new Map<number, number>();
+
+    for (const tile of hand) {
+        tileIndCounts.set(
+            tile,
+            (tileIndCounts.get(tile) || 0) + 1
+        );
     }
+
+    const uniqueTiles = Array.from(tileIndCounts.keys());
+
+    if (shanten === 0) {
+        for (const tile of uniqueTiles) {
+            // Standard discard
+            actions.push({ type: 'discard', tile });
+
+            // Riichi discard
+            if (isMenzen && !config.validationMode) {
+                actions.push({ type: 'discard', tile, riichi: true });
+            }
+        }
+    } else {
+        for (const tile of uniqueTiles) {
+            actions.push({ type: 'discard', tile });
+        }
+    }
+
+    console.log("UNIQUE_CANDIDATE_COUNT", actions.length);
+
     if (hand.includes(TILES.z4 as any)) actions.push({ type: 'kita' });
     return actions;
-}
-
-function createSummary(config: SimulationConfig, remainingTiles: number, totalTimeMs?: number): SimulationSummary {
-    const b = getShantenBreakdown(config.myHand, config.fixedMentsu.length);
-    return { remainingTiles, shanten: { normal: b.normal, chiitoi: b.chiitoi, kokushi: b.kokushi }, totalTimeMs };
 }

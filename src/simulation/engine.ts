@@ -85,6 +85,7 @@ export type Action =
 export type SimulationConfig = {
     myHand: Tile[];
     fixedMentsu: Mentsu[];
+    otherOpenMelds?: Mentsu[];
     myDiscards: Tile[];
     doraIndicators: Tile[];
     myKita: number;
@@ -92,12 +93,16 @@ export type SimulationConfig = {
     trials: number;
     currentTurn: number;
     isDealer: boolean;
+    selfEffectiveWallCount: number;
+    liveWallLimit: number;
+    myKanCount: number;
     validationMode?: boolean;
 };
 
 
 export type SimulationSummary = {
     remainingTiles: number;
+    displayRemainingTiles: number;
     shanten: {
         normal: number;
         chiitoi: number;
@@ -105,6 +110,58 @@ export type SimulationSummary = {
     };
     totalTimeMs?: number;
 };
+
+/**
+ * Unifies the physical playable wall boundary calculation (excluding 王牌 13 tiles).
+ */
+export function computeLiveWall(config: {
+    myHand: Tile[],
+    doraIndicators: Tile[],
+    myKita: number,
+    otherKita: number,
+    currentTurn: number,
+    myKanCount: number
+}): number {
+    // visibleCount for playable wall calculation should exclude "extra" dora indicators
+    // because they are accounted for by the reduced dead wall count.
+    const extraDora = Math.max(0, config.doraIndicators.length - 1);
+    const visibleCount = config.myHand.length + config.myKita + config.otherKita;
+    const turnConsumption = (config.currentTurn - 1) * 3;
+    const physicalMountainAtTurnStart = 108 - visibleCount - turnConsumption;
+
+    // Dead wall is 14 tiles. Subsequent Kans add more dora indicators.
+    // The "unseen" part of the dead wall is (14 - extraDora).
+    const deadWallActualCount = Math.max(0, 14 - extraDora);
+
+    return Math.max(0, physicalMountainAtTurnStart - deadWallActualCount);
+}
+
+export function getPlayableWallCount(config: {
+    myHand: Tile[],
+    doraIndicators: Tile[],
+    myKita: number,
+    otherKita: number,
+    currentTurn: number,
+    myKanCount: number
+}): number {
+    return computeLiveWall(config);
+}
+
+export function createSummary(config: SimulationConfig, remainingTiles: number, totalTimeMs?: number): SimulationSummary {
+    const hand27 = new Int8Array(27);
+    for (const t of config.myHand) {
+        const s = toSanmaTile(toNormalFive(t));
+        if (s !== -1) hand27[s]++;
+    }
+    const b = getShantenBreakdown27(Array.from(hand27), config.fixedMentsu.length);
+    const displayRemainingTiles = Math.max(0, remainingTiles - 26);
+    return {
+        remainingTiles,
+        displayRemainingTiles,
+        shanten: { normal: b.normal, chiitoi: b.chiitoi, kokushi: b.kokushi },
+        totalTimeMs
+    };
+}
 
 export type DiscardResult = {
     action: Action;
@@ -139,6 +196,11 @@ export type DiscardResult = {
     ciUpper: number;
     effectiveTiles?: { tile: Tile; count: number }[];
     lcb?: number;
+    reachedDiff: boolean;
+    totalAgariTurnSum: number;
+    agariCount: number;
+    averageAgariTurn: number | null;
+    averageAgariAfterTurns: number | null;
 };
 
 export type SimulationPathResult = {
@@ -146,6 +208,9 @@ export type SimulationPathResult = {
     point: number;
     isTenpai: boolean;
     initialRemainingTiles: number;
+    totalAgariTurnSum: number;
+    agariCount: number;
+    engineLiveWallLimit: number;
 };
 
 let debugSimCountGlobal = 0;
@@ -160,7 +225,7 @@ export function resetDebugSimCount() {
 }
 
 // TypedArray resources
-const SHARED_MOUNTAIN = new Uint8Array(136);
+const SHARED_MOUNTAIN = new Uint8Array(108);
 
 export function shuffleInPlace(arr: Uint8Array, len: number) {
     for (let i = len - 1; i > 0; i--) {
@@ -341,12 +406,14 @@ export function runSinglePath(
     localFixedMentsuArr: Mentsu[],
     initialAction: Action,
     myKita: number,
-    visibleKitaCount: number,
+    otherKita: number, // Added for unified wall calc
     doraIndicators: Tile[],
     currentTurn: number,
     isDealer: boolean,
     mountain: Uint8Array,
-    mountainSize: number,
+    mountainSize: number, // Physical size for summary
+    liveWallLimit: number, // High-bound for draws
+    selfEffectiveWallCount: number,
     templateCounts: Int8Array,
     workTrialCounts: Int8Array,
     workHand27: Int8Array,
@@ -372,6 +439,19 @@ export function runSinglePath(
     const isTargetDebug = sInitialDiscard === 0 || sInitialDiscard === 1;
 
     const hand27 = workHand27;
+
+    // --- COUNT / MOUNTAIN SYNC CHECK ---
+    let sumCounts = 0;
+    for (let i = 0; i < templateCounts.length; i++) {
+        sumCounts += templateCounts[i];
+    }
+    if (debugSimCountGlobal <= 1) {
+        console.log("COUNT_WALL_SYNC_CHECK", {
+            mountainLength: mountain.length,
+            sumCounts
+        });
+    }
+
     for (let i = 0; i < 27; i++) hand27[i] = 0;
     for (let i = 0; i < initialHand.length; i++) {
         const t = initialHand[i];
@@ -434,15 +514,8 @@ export function runSinglePath(
     const localFixedMentsu = [...localFixedMentsuArr];
     let nukidoraCount = myKita;
 
-    const TOTAL_TILES = 108;
-    const DEAD_WALL = 14;
-    const PLAYABLE_TILES = TOTAL_TILES - DEAD_WALL;
-    const INITIAL_HANDS = 13 * 3;
-
-    const doraCountValue = doraInds.length;
-    const turnsPassed = currentTurn - 1;
-    const drawsConsumed = turnsPassed * 3;
-    const liveWallLimit = PLAYABLE_TILES - INITIAL_HANDS - doraCountValue - drawsConsumed - visibleKitaCount;
+    // --- LIVE WALL LIMIT (Phase 57: Use passed value) ---
+    const effectiveLimit = selfEffectiveWallCount; // Win-rate boundary
 
     const trialCounts = workTrialCounts;
     for (let i = 0; i < 29; i++) {
@@ -451,27 +524,40 @@ export function runSinglePath(
 
     let mountainPtr = 0; // Moved mountainPtr initialization here
 
-    const drawTileCore = (): Tile | null => {
-        if (mountainPtr >= mountainSize || mountainPtr >= liveWallLimit) return null;
-        const typeIdx = mountain[mountainPtr++];
-        trialCounts[typeIdx]--;
-        return TILE_TYPES[typeIdx];
-    };
+    if (isTargetDebug && debugSimCountGlobal <= 3) {
+        console.log("SANMA_LIVE_WALL_CHECK", {
+            wallLength: mountainSize,
+            effectiveLimit,
+            deadWall: mountainSize - effectiveLimit
+        });
+        if (effectiveLimit > mountainSize) throw new Error("SANMA_LIVE_WALL_ERROR");
 
-    const drawTileWithAutoKita = (isPlayer: boolean): Tile | null => {
-        while (true) {
-            if (mountainPtr >= mountainSize || mountainPtr >= liveWallLimit) return null;
-            let tile = drawTileCore();
-            if (!tile) return null;
+        console.log("ENGINE_RECEIVED_WALL", {
+            mountainLength: mountain.length,
+            effectiveLimit,
+            liveWallLimit
+        });
+    }
 
-            if (tile === TILES.z4) {
-                diagNukiCounts++;
-                if (isPlayer) nukidoraCount++;
-                continue;
-            }
-            return tile;
-        }
-    };
+    // --- SANMA SELF DRAW COMPRESSION ---
+    // Sanma: remove other players' hidden hands (13 * 2 = 26)
+    const OTHER_PLAYERS_HANDS = 26;
+    const totalSelfEffectiveTiles = (liveWallLimit - mountainPtr) - OTHER_PLAYERS_HANDS;
+    const safeEffectiveTiles = Math.max(0, totalSelfEffectiveTiles);
+    const selfDrawQuota = Math.floor(safeEffectiveTiles / 3);
+    let selfDrawCount = 0;
+
+    if (isTargetDebug && debugSimCountGlobal <= 3) {
+        console.log("SANMA_SELF_DRAW_SETUP", {
+            liveWallLimit,
+            mountainPtrStart: mountainPtr,
+            totalSelfEffectiveTiles,
+            safeEffectiveTiles,
+            selfDrawQuota
+        });
+    }
+
+
 
     // Capture state for symmetry audit
     const initialHandCounts = isTargetDebug ? Array.from(hand27) : null;
@@ -511,7 +597,7 @@ export function runSinglePath(
             if (initialAction.tile === TILES.p5r) redP5--;
             else if (initialAction.tile === TILES.s5r) redS5--;
         }
-    } else 
+    } else
     */
     if (initialAction.type === 'kita') {
         const sNorth = toSanmaTile(toNormalFive(NORTH));
@@ -519,7 +605,21 @@ export function runSinglePath(
             hand27[sNorth]--;
             nukidoraCount++;
             diagNukiCounts++;
-            const replacement = drawTileWithAutoKita(true);
+            // Replacement draw for initial kita (Uses 1-step increment)
+            let replacement: Tile | null = null;
+            while (true) {
+                if (mountainPtr >= liveWallLimit) break;
+                const rIdx = mountain[mountainPtr++];
+                trialCounts[rIdx]--;
+                const rTile = TILE_TYPES[rIdx];
+                if (rTile === TILES.z4) {
+                    diagNukiCounts++;
+                    nukidoraCount++;
+                    continue;
+                }
+                replacement = rTile;
+                break;
+            }
             if (replacement) {
                 const sRep = toSanmaTile(toNormalFive(replacement));
                 if (sRep !== -1) hand27[sRep]++;
@@ -530,16 +630,16 @@ export function runSinglePath(
     }
 
     if (isTargetDebug && debugSimCountGlobal <= 10) {
-        console.log(`=== TRIAL DEBUG [${tileToString(initialDiscard!)}] ===`);
-        console.log(`trialIndexGlobal: ${debugSimCountGlobal}`);
-        console.log(`mountainSize: ${mountainSize}`);
-        console.log(`mountainHash: ${simpleHash(mountain, mountainSize)}`);
-        console.log(`hand before discard: ${JSON.stringify(initialHandCounts)}`);
-        console.log(`hand after discard:  ${JSON.stringify(Array.from(hand27))}`);
+        console.log(`=== TRIAL DEBUG[${tileToString(initialDiscard!)}] === `);
+        console.log(`trialIndexGlobal: ${debugSimCountGlobal} `);
+        console.log(`mountainSize: ${mountainSize} `);
+        console.log(`mountainHash: ${simpleHash(mountain, mountainSize)} `);
+        console.log(`hand before discard: ${JSON.stringify(initialHandCounts)} `);
+        console.log(`hand after discard:  ${JSON.stringify(Array.from(hand27))} `);
 
         const breakdown = getShantenBreakdown27(Array.from(hand27), localFixedMentsu.length);
-        console.log(`shanten breakdown: normal=${breakdown.normal}, chiitoi=${breakdown.chiitoi}`);
-        console.log(`ukeire count: ${getUkeireCount27(hand27, localFixedMentsu.length, trialCounts)}`);
+        console.log(`shanten breakdown: normal = ${breakdown.normal}, chiitoi = ${breakdown.chiitoi} `);
+        console.log(`ukeire count: ${getUkeireCount27(hand27, localFixedMentsu.length, trialCounts)} `);
         console.log("=== TRIAL DEBUG END ===");
     }
 
@@ -626,29 +726,44 @@ export function runSinglePath(
     // SIMULATION LOOP
     let hasReachedTenpai = false;
     let simLoopSafety = 0;
-    while (mountainPtr < liveWallLimit) {
+    while (
+        mountainPtr < liveWallLimit &&
+        selfDrawCount < selfDrawQuota
+    ) {
         simLoopSafety++;
         if (simLoopSafety > 1000) throw new Error("Infinite loop detected in simulation loop");
 
         pathTurnCount++;
 
-        // Opponents (Simulated as random counts reduction)
-        for (let j = 0; j < 2; j++) {
-            if (mountainPtr >= mountainSize || mountainPtr >= liveWallLimit) break;
-            drawTileWithAutoKita(false); // Opponent turn draw
+        // My Draw (Compressed: skip 2 opponent tiles)
+        let drawn: Tile | null = null;
+        while (true) {
+            if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) break;
+
+            const typeIdx = mountain[mountainPtr];
+            mountainPtr += 3; // 3人分スキップ
+            selfDrawCount++;
+            diagTurnDraws++;
+
+            trialCounts[typeIdx]--;
+            const tile = TILE_TYPES[typeIdx];
+
+            if (tile === TILES.z4) {
+                diagNukiCounts++;
+                nukidoraCount++;
+                continue;
+            }
+            drawn = tile;
+            break;
         }
 
-        if (mountainPtr >= mountainSize || mountainPtr >= liveWallLimit) break;
-
-        // My Draw
-        const drawn = drawTileWithAutoKita(true); // Player turn draw
         if (!drawn) break;
         const sDrawn = toSanmaTile(toNormalFive(drawn));
         if (sDrawn !== -1) hand27[sDrawn]++;
         if (drawn === TILES.p5r) redP5++;
         else if (drawn === TILES.s5r) redS5++;
 
-        if (mountainPtr >= liveWallLimit) isHaitei = true;
+        if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) isHaitei = true;
 
         // ======== WIN CHECK IMMEDIATELY AFTER DRAW ========
         const currentHand = reconstructHand();
@@ -723,7 +838,7 @@ export function runSinglePath(
                         han: result.han,
                         fu: result.fu,
                         point: points + (isRiichi ? 1000 : 0) + scoreAdjustment,
-                        yakuList: result.yakuList.map(y => `${y.name}(${y.han}han${y.isDora ? ', dora' : ''})`)
+                        yakuList: result.yakuList.map(y => `${y.name} (${y.han}han${y.isDora ? ', dora' : ''})`)
                     });
                     debugWinLogged = true;
                 }
@@ -739,9 +854,48 @@ export function runSinglePath(
                     });
                 }
                 if (isTargetDebug && tileDebugCount <= 2) {
-                    console.log(`discard origin: ${tileToString(initialDiscard!)}, agariCheckCount: ${agariCheckCount}, shantenCalcCallCount: ${shantenCalcCallCount}`);
+                    console.log(`discard origin: ${tileToString(initialDiscard!)}, agariCheckCount: ${agariCheckCount}, shantenCalcCallCount: ${shantenCalcCallCount} `);
                 }
-                return { type: 'win', point: points + (isRiichi ? 1000 : 0) + scoreAdjustment, isTenpai: true, initialRemainingTiles: initialTotalForSummary };
+                if (isTargetDebug && debugSimCountGlobal <= 5) {
+                    const theoreticalLiveWall = mountain.length - 13;
+                    console.log("WALL_AUDIT_END", {
+                        wallArrayLength: mountain.length,
+                        liveWallLimit,
+                        mountainPtr,
+                        remainingComputed: liveWallLimit - mountainPtr,
+                    });
+                    console.log("THEORETICAL_LIVE_WALL", theoreticalLiveWall);
+                    console.log("TENPAI_AUDIT", {
+                        isAgari: true,
+                        finalShanten: -1,
+                        countedAsTenpai: false
+                    });
+                    console.log("SANMA_WIN_PATH_AUDIT", {
+                        mountainPtr,
+                        diagTurnDraws,
+                        agariTurn: currentTurn + (mountainPtr / 3),
+                        theoreticalLiveWall
+                    });
+                }
+
+                if (liveWallLimit > mountain.length) {
+                    console.error("WALL_ERROR: liveWallLimit exceeds wall length");
+                }
+                if (mountainPtr > liveWallLimit) {
+                    console.error("WALL_ERROR: mountainPtr exceeded liveWallLimit");
+                }
+                // The provided diff for this return block was malformed.
+                // Applying the intended change based on the instruction "Add engineLiveWallLimit to the result type and return it from runSinglePath."
+                // and keeping the existing logic for other fields.
+                return {
+                    type: 'win',
+                    point: points + (isRiichi ? 1000 : 0) + scoreAdjustment,
+                    isTenpai: true,
+                    initialRemainingTiles: initialTotalForSummary,
+                    totalAgariTurnSum: currentTurn + (mountainPtr / 3),
+                    agariCount: 1,
+                    engineLiveWallLimit: liveWallLimit
+                };
             }
         }
         shantenCalcCallCount++;
@@ -800,12 +954,52 @@ export function runSinglePath(
     }
 
     if (isTargetDebug && debugSimCountGlobal <= 2) {
-        console.log(`discard origin: ${tileToString(initialDiscard!)}, agariCheckCount: ${agariCheckCount}, shantenCalcCallCount: ${shantenCalcCallCount}`);
+        console.log(`discard origin: ${tileToString(initialDiscard!)}, agariCheckCount: ${agariCheckCount}, shantenCalcCallCount: ${shantenCalcCallCount} `);
     }
     shantenCalcCallCount++;
     const finalShanten = getShantenMemoized(hand27 as any, localFixedMentsu.length);
     const isTenpai = finalShanten <= 0;
-    return { type: 'draw', point: scoreAdjustment + (isTenpai ? 1000 : -1000), isTenpai, initialRemainingTiles: initialTotalForSummary };
+
+    if (isTargetDebug && debugSimCountGlobal <= 5) {
+        const theoreticalLiveWall = mountain.length - 13;
+        console.log("WALL_AUDIT_END", {
+            wallArrayLength: mountain.length,
+            liveWallLimit,
+            mountainPtr,
+            remainingComputed: liveWallLimit - mountainPtr,
+        });
+        console.log("THEORETICAL_LIVE_WALL", theoreticalLiveWall);
+        console.log("TENPAI_AUDIT", {
+            isAgari: false,
+            finalShanten,
+            countedAsTenpai: !false && finalShanten === 0
+        });
+    }
+
+    if (liveWallLimit > mountain.length) {
+        console.error("WALL_ERROR: liveWallLimit exceeds wall length");
+    }
+    if (mountainPtr > liveWallLimit) {
+        console.error("WALL_ERROR: mountainPtr exceeded liveWallLimit");
+    }
+
+    if (isTargetDebug && debugSimCountGlobal <= 3) {
+        console.log("SANMA_SELF_DRAW_END", {
+            selfDrawCount,
+            mountainPtr,
+            remainingPhysical: liveWallLimit - mountainPtr
+        });
+    }
+
+    return {
+        type: 'draw',
+        point: scoreAdjustment + (isTenpai ? 1000 : -1000),
+        isTenpai,
+        initialRemainingTiles: initialTotalForSummary, // Assuming this is the correct variable for initialRemainingTiles
+        totalAgariTurnSum: 0,
+        agariCount: 0,
+        engineLiveWallLimit: liveWallLimit
+    };
 }
 
 export function evaluateWinningHand(
@@ -851,7 +1045,7 @@ export function evaluateWinningHand(
             baseHan: best.yaku.yakuList.filter(y => !y.isDora).reduce((s, y) => s + y.han, 0),
             doraCount: state.doraCount,
             nukiDoraCount: state.kitaCount,
-            yakuList: best.yaku.yakuList.map(y => `${y.name}(${y.han})`),
+            yakuList: best.yaku.yakuList.map(y => `${y.name} (${y.han})`),
             isTsumo: state.isTsumo,
             isHaitei: state.isHaitei,
             turnCount: state.turnCount

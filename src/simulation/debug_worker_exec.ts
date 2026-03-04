@@ -41,15 +41,18 @@ function runBatchSimulationsLocal(
         const forcedBatchSize = 1;
         for (let i = 0; i < forcedBatchSize; i++) {
             console.log("Running single path");
+            // Dummy arguments for debugging purposes as the signature has changed
             const result = runSinglePath(
                 myHand,
                 fixedMentsu,
                 action,
-                visible,
-                kitaCount,
+                0, 0, // kita
                 doraIndicators,
                 currentTurn,
-                isDealer
+                isDealer,
+                new Uint8Array(108), 108, 108,
+                new Int8Array(29), new Int32Array(29), new Int8Array(27), new Int32Array(29),
+                1234, 0
             );
 
             if (result.type === 'win') {
