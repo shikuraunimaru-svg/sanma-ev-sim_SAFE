@@ -28,7 +28,7 @@ export function ResultsTable({ results }: Props) {
                     {sorted.map((res) => {
                         const isBest = res === best;
                         const action = res.action;
-                        const key = `${action.type}-${'tile' in action ? action.tile : ''}-${'riichi' in action ? !!action.riichi : ''}`;
+                        const key = `${action.type}-${'tile' in action ? action.tile : ''}-${'riichi' in action ? action.riichi : ''}`;
 
                         // Calculate EV loss
                         let lossDisplay = null;
@@ -55,12 +55,12 @@ export function ResultsTable({ results }: Props) {
                                         {res.action.type === 'kita' && (
                                             <div className="mt-1 text-[12px] font-bold text-blue-500 leading-none text-center">北抜き</div>
                                         )}
-                                        {res.action.type === 'discard' && res.action.riichi && (
+                                        {res.action.type === 'discard' && (res.action as any).riichi && (
                                             <div className="mt-1 text-[12px] font-bold text-gray-700 leading-none text-center">立直</div>
                                         )}
                                         {res.action.type === 'ankan' && (
-                                            <div className={`mt-1 text-[12px] font-bold leading-none text-center ${res.action.riichi ? 'text-gray-700' : 'text-red-600'}`}>
-                                                {res.action.riichi ? '暗槓立直' : '暗槓'}
+                                            <div className={`mt-1 text-[12px] font-bold leading-none text-center ${(res.action as any).riichi ? 'text-gray-700' : 'text-red-600'}`}>
+                                                {(res.action as any).riichi ? '暗槓立直' : '暗槓'}
                                             </div>
                                         )}
                                         {res.action.type === 'kakan' && (

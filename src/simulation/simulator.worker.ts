@@ -1,4 +1,6 @@
-import { toNormalFive, toSanmaTile, TILES, tileToString } from '../core/tile';
+console.log("WORKER_VERSION_PHASE58_ACTIVE");
+console.log("WORKER_BUILD_ID", Date.now());
+import { toNormalFive, toSanmaTile, TILES, tileToString, isRedFive } from '../core/tile';
 import type { Tile } from '../core/tile';
 import { getShantenBreakdown, calculateShanten as calculateShantenCore } from '../core/shanten';
 
@@ -56,12 +58,23 @@ export function runBatchSimulations(config: SimulationConfig) {
     }
 
     const possibleActions = getPossibleActions(config);
+    console.log("GET_POSSIBLE_ACTIONS_RETURNED", possibleActions.length, "actions");
+
+    console.log("CANDIDATES_SOURCE", possibleActions.map(a => ({
+        type: a.type,
+        tile: (a as any).tile ? tileToString((a as any).tile) : null,
+        tileInd: (a as any).tileInd,
+        riichi: (a as any).riichi
+    })));
 
     console.log("=== CANDIDATES GENERATED ===");
+    // NOTE: tileInd は手牌配列インデックス、tile は牌ID
     console.table(possibleActions.map(a => ({
         type: a.type,
-        tileInd: (a as any).tile,
-        tileName: a.type === 'discard' ? tileToString((a as any).tile) : undefined
+        tileInd: (a as any).tileInd,          // 手牌インデックス
+        tile_ID: (a as any).tile,              // 牌ID（旧ログでの "tileInd" は誤り）
+        tileName: a.type === 'discard' ? tileToString((a as any).tile) : undefined,
+        riichi: (a as any).riichi ?? false     // リーチ候補を可視化
     })));
 
     const visible: Tile[] = [
@@ -579,7 +592,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     for (const c of allCandidates) {
         if (c.agariCount > 0) {
             c.averageAgariTurn = c.totalAgariTurnSum / c.agariCount;
-            c.averageAgariAfterTurns = c.averageAgariTurn - config.currentTurn;
+            c.averageAgariAfterTurns = Math.max(0, c.averageAgariTurn - config.currentTurn);
         } else {
             c.averageAgariTurn = null;
             c.averageAgariAfterTurns = null;
@@ -607,6 +620,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         };
     });
 
+    console.log("WORKER_RESULT_SAMPLE", processedResults[0]);
     self.postMessage({ type: 'RESULT', results: processedResults, summary });
     clearShantenCache();
 }
@@ -636,7 +650,26 @@ function calculateEffectiveTiles(hand: Tile[], fixedMentsuCount: number, visible
     return results.sort((a, b) => a.tile - b.tile);
 }
 
-function getPossibleActions(config: SimulationConfig): Action[] {
+/**
+ * Normalizes a hand to 14 tiles for shanten calculation.
+ * If 13 tiles, adds a dummy tile (that doesn't improve shanten) to make it 14.
+ */
+function normalizeTo14Tiles(hand: Tile[]): Tile[] {
+    if (hand.length % 3 === 2) return hand; // Already 14, 11, 8, or 5 tiles (after draw/calling)
+    // If 13, 10, 7, 4 tiles (before draw), we need to check if we CAN be tenpai.
+    // In Riichi context, we check if adding ANY tile makes it agari or tenpai.
+    // However, the standard way to check "Can I Riichi?" is to check if shanten is 0 with 13 tiles,
+    // but the system's `calculateShanten` might vary. 
+    // The user specifically requested normalizeTo14Tiles logic.
+    return [...hand, TILES.m1 as Tile]; // Add dummy
+}
+
+export function getPossibleActions(config: SimulationConfig): Action[] {
+    console.log("GET_POSSIBLE_ACTIONS_CALLED");
+    console.log("ACTION_GEN_ENTRY", {
+        hand: config.myHand.map(tileToString),
+        handLength: config.myHand.length
+    });
     const actions: Action[] = [];
     const hand = config.myHand;
 
@@ -650,8 +683,8 @@ function getPossibleActions(config: SimulationConfig): Action[] {
     });
 
     // Shanten normalization: calculate shanten on a 14-tile equivalent hand.
-    const shantenHand = hand.length % 3 === 0 ? hand.slice(0, hand.length - 1) : hand;
-    const shanten = calculateShanten(shantenHand, config.fixedMentsu.length);
+    const normalizedHand = normalizeTo14Tiles(hand);
+    const shanten = calculateShanten(normalizedHand, config.fixedMentsu.length);
 
     console.log("RIICHI_CHECK", {
         shanten,
@@ -662,36 +695,94 @@ function getPossibleActions(config: SimulationConfig): Action[] {
 
     if (hand.length % 3 === 2 && shanten === -1) actions.push({ type: 'tsumo' });
 
-    // 重複候補修正 (Phase 57-D): Map を使用した完全排除
-    const tileIndCounts = new Map<number, number>();
+    // ① 牌種単位で代表インデックスをMap化 (Phase 58 完全版)
+    // キーは toNormalFive(tile) の数値 → r5p と 5p を同一牌種として扱う
+    // 代表牌は「通常五優先」: 既存が赤五かつ新しいのが通常五なら上書き
+    const discardMap = new Map<number, number>();
+    for (let i = 0; i < hand.length; i++) {
+        const tile = hand[i];
+        const key = toNormalFive(tile);
 
-    for (const tile of hand) {
-        tileIndCounts.set(
-            tile,
-            (tileIndCounts.get(tile) || 0) + 1
-        );
-    }
-
-    const uniqueTiles = Array.from(tileIndCounts.keys());
-
-    if (shanten === 0) {
-        for (const tile of uniqueTiles) {
-            // Standard discard
-            actions.push({ type: 'discard', tile });
-
-            // Riichi discard
-            if (isMenzen && !config.validationMode) {
-                actions.push({ type: 'discard', tile, riichi: true });
-            }
+        if (!discardMap.has(key)) {
+            discardMap.set(key, i);
+            continue;
         }
-    } else {
-        for (const tile of uniqueTiles) {
-            actions.push({ type: 'discard', tile });
+
+        // 既存が赤五 かつ 今の牌が通常五なら、通常五を優先して上書き
+        const existingIndex = discardMap.get(key)!;
+        const existingTile = hand[existingIndex];
+        if (isRedFive(existingTile) && !isRedFive(tile)) {
+            discardMap.set(key, i);
         }
     }
+    console.log("DISCARD_MAP_SIZE", discardMap.size);
+    console.log("MAP_UNIQUE_SIZE", discardMap.size);
+    console.log("DISCARD_MAP_KEYS", [...discardMap.values()].map(idx => tileToString(hand[idx])));
 
-    console.log("UNIQUE_CANDIDATE_COUNT", actions.length);
+    // ② Mapからのみdiscard生成
+    for (const [_normalKey, tileInd] of discardMap.entries()) {
+        const tile = hand[tileInd];
 
+        console.log("DISCARD_MAP_DEBUG", {
+            tileInd,
+            tileType: toNormalFive(tile),
+            tileName: tileToString(tile)
+        });
+
+        const generateDiscard = (riichi: boolean) => {
+            console.log("DISCARD_GENERATED", {
+                tileInd,
+                tileName: tileToString(tile),
+                riichi,
+                source: "discardMap"  // discardMap 経由であることを明示
+            });
+            actions.push({
+                type: 'discard',
+                tile,
+                tileInd,
+                riichi
+            });
+        };
+
+        // DAMA
+        generateDiscard(false);
+
+        // RIICHI (if possible)
+        const nextHand = [...normalizedHand];
+        const removeIdx = nextHand.findIndex(t => t === tile);
+        if (removeIdx !== -1) {
+            nextHand.splice(removeIdx, 1);
+        }
+        const nextShanten = calculateShanten(nextHand, config.fixedMentsu.length);
+        const canRiichi = nextShanten === 0 && isMenzen && !config.validationMode;
+
+        if (canRiichi) {
+            generateDiscard(true);
+        }
+    }
+    console.log("ACTIONS_AFTER_GENERATION", actions.map(a => ({
+        type: a.type,
+        tile: (a as any).tile ? tileToString((a as any).tile) : null,
+        tileInd: (a as any).tileInd,
+        riichi: (a as any).riichi
+    })));
+    console.log("ACTIONS_AFTER_UNIQUE", actions.length);
+
+    // ③ 強制デバッグ：重複チェック (Phase 58 Safety Check)
+    // キーは toNormalFive ベース × riichi で一意性を判断
+    const keySet = new Set<string>();
+    for (const a of actions) {
+        if (a.type !== 'discard') continue;
+        const key = `${toNormalFive(hand[a.tileInd])}-${a.riichi}`;
+        if (keySet.has(key)) {
+            throw new Error("DUPLICATE_ACTION_DETECTED: " + key);
+        }
+        keySet.add(key);
+    }
+
+
+    console.log("TOTAL_ACTION_COUNT", actions.length);
     if (hand.includes(TILES.z4 as any)) actions.push({ type: 'kita' });
+    console.log("ACTION_GEN_EXIT_COUNT", actions.length);
     return actions;
 }

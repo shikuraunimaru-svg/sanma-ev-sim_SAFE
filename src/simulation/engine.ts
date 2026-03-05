@@ -76,7 +76,12 @@ export class SimpleRNG {
 }
 
 export type Action =
-    | { type: 'discard', tile: Tile, riichi?: boolean }
+    | {
+        type: 'discard',
+        tile: Tile,
+        tileInd: number,
+        riichi: boolean,
+    }
     | { type: 'kita' }
     | { type: 'ankan', tile: Tile, riichi?: boolean }
     | { type: 'kakan', tile: Tile }
@@ -238,6 +243,9 @@ export function shuffleInPlace(arr: Uint8Array, len: number) {
 
 // DEBUG FLAG (Set to true only for diagnosing EV calculation issues)
 const DEBUG_MODE = true;
+
+// ===== DEBUG FLAGS =====
+const DEBUG_WIN = false; // WIN_DEBUG ログの ON/OFF（デフォルト OFF）
 
 export function resetDebugCounters() {
     debugSimCountGlobal = 0;
@@ -422,584 +430,184 @@ export function runSinglePath(
     tenpaiDepth: number = 0
 ): SimulationPathResult {
     const rng = new SimpleRNG(seed);
-    let localTenpaiDepth = tenpaiDepth;
-    debugSimCountGlobal++;
-    let agariCheckCount = 0;
-    let shantenCalcCallCount = 0;
-
-    const initialDiscard = initialAction.type === 'discard' ? initialAction.tile : null;
-    const sInitialDiscard = initialDiscard !== null ? toSanmaTile(toNormalFive(initialDiscard)) : -1;
-
-    if (sInitialDiscard !== -1) {
-        debugCountsByTile[sInitialDiscard] = (debugCountsByTile[sInitialDiscard] || 0) + 1;
-    }
-    const tileDebugCount = sInitialDiscard !== -1 ? debugCountsByTile[sInitialDiscard] : 0;
-
-    // 1m is index 0, 9m is index 1 in sanma tiles (see TO_SANMA_MAP)
-    const isTargetDebug = sInitialDiscard === 0 || sInitialDiscard === 1;
-
-    const hand27 = workHand27;
-
-    // --- COUNT / MOUNTAIN SYNC CHECK ---
-    let sumCounts = 0;
-    for (let i = 0; i < templateCounts.length; i++) {
-        sumCounts += templateCounts[i];
-    }
-    if (debugSimCountGlobal <= 1) {
-        console.log("COUNT_WALL_SYNC_CHECK", {
-            mountainLength: mountain.length,
-            sumCounts
-        });
-    }
-
-    for (let i = 0; i < 27; i++) hand27[i] = 0;
-    for (let i = 0; i < initialHand.length; i++) {
-        const t = initialHand[i];
-        const sTile = toSanmaTile(toNormalFive(t));
-        if (sTile !== -1) hand27[sTile]++;
-    }
-
-    if (sInitialDiscard !== -1 && isTargetDebug && tileDebugCount <= 10) {
-        console.log("INITIAL DISCARD CHECK", {
-            discardTile: tileToString(initialDiscard!),
-            before: hand27[sInitialDiscard] + 1, // Conceptually before, since runSinglePath receives afterHand
-            after: hand27[sInitialDiscard],
-            note: "Discard was already applied to initialHand by the caller"
-        });
-    }
-
-    const discardOrigin = initialAction.type === 'discard' ? tileToString(initialAction.tile) : null;
-    const discardOriginNormalized = discardOrigin || "";
-    let logTile = discardOriginNormalized;
-    if (discardOriginNormalized === "5z") logTile = "白";
-    else if (discardOriginNormalized === "6z") logTile = "發";
-    else if (discardOriginNormalized === "7z") logTile = "中";
-
-    const symmetryTargets = ["1m", "9m", "白", "發", "中"];
-    if (symmetryTargets.includes(logTile) && tileDebugCount <= 1) {
-        console.log("SYMMETRY_COUNTS27", logTile, Array.from(hand27));
-        const bd = getShantenBreakdown27(hand27 as any, localFixedMentsuArr.length, logTile);
-        const normal = bd.normal;
-        const chiitoi = bd.chiitoi;
-
-        if (symmetryTargets.includes(logTile)) {
-            console.log("SYMMETRY_SHANTEN_CHECK", logTile, { normal, chiitoi, tenpaiDepth: localTenpaiDepth });
-
-            const effTiles: { tile: string; count: number }[] = [];
-            let totalUkeire = 0;
-            const currentS = Math.min(normal, chiitoi, bd.kokushi);
-            if (currentS > -1) {
-                for (let t = 0; t < 27; t++) {
-                    let count = templateCounts[t];
-                    // Red 5s are stored at index 27 (p5r) and 28 (s5r) in templateCounts
-                    if (t === 13) count += templateCounts[27]; // 5p
-                    if (t === 22) count += templateCounts[28]; // 5s
-
-                    if (count <= 0) continue;
-                    hand27[t]++;
-                    const s = getShantenMemoized(hand27 as any, localFixedMentsuArr.length);
-                    if (s < currentS) {
-                        effTiles.push({ tile: tileToString(toStandardTile(t)), count });
-                        totalUkeire += count;
-                    }
-                    hand27[t]--;
-                }
-            }
-            console.log("SYMMETRY_EFFECTIVE_TILES", logTile, effTiles);
-            console.log("SYMMETRY_UKEIRE_COUNT", logTile, totalUkeire);
-        }
-    }
-
-    const doraInds = [...doraIndicators];
-    const localFixedMentsu = [...localFixedMentsuArr];
-    let nukidoraCount = myKita;
-
-    // --- LIVE WALL LIMIT (Phase 57: Use passed value) ---
-    const effectiveLimit = selfEffectiveWallCount; // Win-rate boundary
-
-    const trialCounts = workTrialCounts;
-    for (let i = 0; i < 29; i++) {
-        trialCounts[i] = templateCounts[i];
-    }
-
-    let mountainPtr = 0; // Moved mountainPtr initialization here
-
-    if (isTargetDebug && debugSimCountGlobal <= 3) {
-        console.log("SANMA_LIVE_WALL_CHECK", {
-            wallLength: mountainSize,
-            effectiveLimit,
-            deadWall: mountainSize - effectiveLimit
-        });
-        if (effectiveLimit > mountainSize) throw new Error("SANMA_LIVE_WALL_ERROR");
-
-        console.log("ENGINE_RECEIVED_WALL", {
-            mountainLength: mountain.length,
-            effectiveLimit,
-            liveWallLimit
-        });
-    }
-
-    // --- SANMA SELF DRAW COMPRESSION ---
-    // Sanma: remove other players' hidden hands (13 * 2 = 26)
-    const OTHER_PLAYERS_HANDS = 26;
-    const totalSelfEffectiveTiles = (liveWallLimit - mountainPtr) - OTHER_PLAYERS_HANDS;
-    const safeEffectiveTiles = Math.max(0, totalSelfEffectiveTiles);
-    const selfDrawQuota = Math.floor(safeEffectiveTiles / 3);
-    let selfDrawCount = 0;
-
-    if (isTargetDebug && debugSimCountGlobal <= 3) {
-        console.log("SANMA_SELF_DRAW_SETUP", {
-            liveWallLimit,
-            mountainPtrStart: mountainPtr,
-            totalSelfEffectiveTiles,
-            safeEffectiveTiles,
-            selfDrawQuota
-        });
-    }
-
-
-
-    // Capture state for symmetry audit
-    const initialHandCounts = isTargetDebug ? Array.from(hand27) : null;
-
-    let redP5 = 0;
-    let redS5 = 0;
-    for (let i = 0; i < initialHand.length; i++) {
-        const t = initialHand[i];
-        if (t === TILES.p5r) redP5++;
-        else if (t === TILES.s5r) redS5++;
-    }
-
-    const NORTH = TILES.z4;
     const initialTotalForSummary = liveWallLimit;
 
+    // Internalized path executor
+    const executePath = (): SimulationPathResult => {
+        // --- 1. State Reset ---
+        const hand27 = workHand27;
+        const trialCounts = workTrialCounts;
 
-    let isRiichi = (initialAction.type === 'discard' || initialAction.type === 'ankan') ? !!initialAction.riichi : false;
-
-    let isDoubleRiichi = false;
-    let isIppatsu = false;
-    let isHaitei = false;
-    let pathTurnCount = 0;
-    let scoreAdjustment = 0;
-
-    // Diagnostic counters
-    let diagTurnDraws = 0;
-    let diagExtraDraws = 0;
-    let diagNukiCounts = 0;
-
-    // Apply Initial Action
-    // Note: runSinglePath now expects initialHand to be ALREADY discarded for initialAction.type === 'discard'
-    /*
-    if (initialAction.type === 'discard' || initialAction.type === 'ankan' || initialAction.type === 'kakan') {
-        const sAction = toSanmaTile(toNormalFive(initialAction.tile));
-        if (sAction !== -1) {
-            hand27[sAction]--;
-            if (initialAction.tile === TILES.p5r) redP5--;
-            else if (initialAction.tile === TILES.s5r) redS5--;
+        for (let i = 0; i < 27; i++) hand27[i] = 0;
+        for (const t of initialHand) {
+            const sTile = toSanmaTile(toNormalFive(t));
+            if (sTile !== -1) hand27[sTile]++;
         }
-    } else
-    */
-    if (initialAction.type === 'kita') {
-        const sNorth = toSanmaTile(toNormalFive(NORTH));
-        if (sNorth !== -1 && hand27[sNorth] > 0) {
-            hand27[sNorth]--;
-            nukidoraCount++;
-            diagNukiCounts++;
-            // Replacement draw for initial kita (Uses 1-step increment)
-            let replacement: Tile | null = null;
-            while (true) {
-                if (mountainPtr >= liveWallLimit) break;
-                const rIdx = mountain[mountainPtr++];
-                trialCounts[rIdx]--;
-                const rTile = TILE_TYPES[rIdx];
-                if (rTile === TILES.z4) {
-                    diagNukiCounts++;
-                    nukidoraCount++;
-                    continue;
+
+        for (let i = 0; i < 29; i++) trialCounts[i] = templateCounts[i];
+
+        let redP5 = 0; let redS5 = 0;
+        for (const t of initialHand) {
+            if (t === TILES.p5r) redP5++;
+            else if (t === TILES.s5r) redS5++;
+        }
+
+        let mountainPtr = 0;
+        let selfDrawCount = 0;
+        const selfDrawQuota = Math.floor(Math.max(0, liveWallLimit - 26) / 3);
+        let nukidoraCount = myKita;
+        let isRiichi = (initialAction.type === 'discard' && initialAction.riichi) || (initialAction.type === 'ankan' && initialAction.riichi) || false;
+        let isIppatsu = isRiichi; // Ippatsu is active if riichi is declared
+        let isHaitei = false;
+        let pathTurnCount = 0;
+        let scoreAdjustment = isRiichi ? -1000 : 0;
+
+        const reconstructHand = (): Tile[] => {
+            const res: Tile[] = [];
+            let p5Added = 0; let s5Added = 0;
+            for (let i = 0; i < 27; i++) {
+                const count = hand27[i];
+                const t34 = toStandardTile(i);
+                for (let j = 0; j < count; j++) {
+                    if (t34 === TILES.p5 && p5Added < redP5) { res.push(TILES.p5r); p5Added++; }
+                    else if (t34 === TILES.s5 && s5Added < redS5) { res.push(TILES.s5r); s5Added++; }
+                    else { res.push(t34); }
                 }
-                replacement = rTile;
+            }
+            return res;
+        };
+
+        const getCurrentDoraCount = () => countDora(reconstructHand(), doraIndicators, localFixedMentsuArr, nukidoraCount);
+
+        // --- 2. Initial Kita Handling (Only if initial action) ---
+        if (initialAction.type === 'kita') {
+            const sNorth = toSanmaTile(toNormalFive(TILES.z4));
+            if (sNorth !== -1 && hand27[sNorth] > 0) {
+                hand27[sNorth]--;
+                nukidoraCount++;
+                while (mountainPtr < liveWallLimit) {
+                    const rIdx = mountain[mountainPtr++];
+                    trialCounts[rIdx]--;
+                    const rTile = TILE_TYPES[rIdx];
+                    if (rTile === TILES.z4) { nukidoraCount++; continue; }
+                    const sRep = toSanmaTile(toNormalFive(rTile));
+                    if (sRep !== -1) hand27[sRep]++;
+                    if (rTile === TILES.p5r) redP5++; else if (rTile === TILES.s5r) redS5++;
+                    break;
+                }
+            }
+        }
+
+        // --- 3. Simulation Loop ---
+        let simLoopSafety = 0;
+        while (mountainPtr < liveWallLimit && selfDrawCount < selfDrawQuota) {
+            simLoopSafety++; if (simLoopSafety > 1000) break;
+            pathTurnCount++;
+
+            // My Draw
+            let drawn: Tile | null = null;
+            while (true) {
+                if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) break;
+                const typeIdx = mountain[mountainPtr];
+                mountainPtr += 3; // Sanma skip
+                selfDrawCount++;
+                trialCounts[typeIdx]--;
+                const tile = TILE_TYPES[typeIdx];
+                if (tile === TILES.z4) { nukidoraCount++; continue; }
+                drawn = tile;
                 break;
             }
-            if (replacement) {
-                const sRep = toSanmaTile(toNormalFive(replacement));
-                if (sRep !== -1) hand27[sRep]++;
-                if (replacement === TILES.p5r) redP5++;
-                else if (replacement === TILES.s5r) redS5++;
-            }
-        }
-    }
 
-    if (isTargetDebug && debugSimCountGlobal <= 10) {
-        console.log(`=== TRIAL DEBUG[${tileToString(initialDiscard!)}] === `);
-        console.log(`trialIndexGlobal: ${debugSimCountGlobal} `);
-        console.log(`mountainSize: ${mountainSize} `);
-        console.log(`mountainHash: ${simpleHash(mountain, mountainSize)} `);
-        console.log(`hand before discard: ${JSON.stringify(initialHandCounts)} `);
-        console.log(`hand after discard:  ${JSON.stringify(Array.from(hand27))} `);
+            if (!drawn) break;
+            const sDrawn = toSanmaTile(toNormalFive(drawn));
+            if (sDrawn !== -1) hand27[sDrawn]++;
+            if (drawn === TILES.p5r) redP5++; else if (drawn === TILES.s5r) redS5++;
+            if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) isHaitei = true;
 
-        const breakdown = getShantenBreakdown27(Array.from(hand27), localFixedMentsu.length);
-        console.log(`shanten breakdown: normal = ${breakdown.normal}, chiitoi = ${breakdown.chiitoi} `);
-        console.log(`ukeire count: ${getUkeireCount27(hand27, localFixedMentsu.length, trialCounts)} `);
-        console.log("=== TRIAL DEBUG END ===");
-    }
-
-    const reconstructHand = (): Tile[] => {
-        const res: Tile[] = [];
-        let p5Added = 0;
-        let s5Added = 0;
-        for (let i = 0; i < 27; i++) {
-            const count = hand27[i];
-            const t34 = toStandardTile(i);
-            for (let j = 0; j < count; j++) {
-                if (t34 === TILES.p5 && p5Added < redP5) {
-                    res.push(TILES.p5r);
-                    p5Added++;
-                } else if (t34 === TILES.s5 && s5Added < redS5) {
-                    res.push(TILES.s5r);
-                    s5Added++;
-                } else {
-                    res.push(t34);
-                }
-            }
-        }
-        return res;
-    };
-
-    const getCurrentDoraCount = () => countDora(reconstructHand(), doraInds, localFixedMentsu, nukidoraCount);
-    const isValidWin = (result: YakuResult) => validateAgari(result);
-
-
-    interface RiichiDecisionState {
-        isMenzen: boolean;
-        hasDeclaredRiichi: boolean;
-        remainingDraws: number;
-    }
-
-    function shouldDeclareRiichi(state: RiichiDecisionState): boolean {
-        if (!state.isMenzen) return false;
-        if (state.hasDeclaredRiichi) return false;
-        if (state.remainingDraws <= 0) return false;
-
-        // 今は常時リーチ（将来拡張余地あり）
-        return true;
-    }
-
-    const performGreedyDiscard = (tenpaiDepth: number): boolean => {
-        const bestDiscardS27 = findBestDiscard27(hand27, localFixedMentsu.length, trialCounts, rng, tenpaiDepth);
-
-        if (bestDiscardS27 !== -1) {
-            if (isTargetDebug && debugSimCountGlobal <= 5) console.log(`Removing tile: ${bestDiscardS27} (greedy discard)`);
-            hand27[bestDiscardS27]--;
-            // Boundary check
-            if (hand27[bestDiscardS27] < 0) {
-                hand27[bestDiscardS27] = 0; // Robustness
-            }
-            const t34 = toStandardTile(bestDiscardS27);
-            if (t34 === TILES.p5 && redP5 > 0 && hand27[bestDiscardS27] < redP5) {
-                redP5--;
-            } else if (t34 === TILES.s5 && redS5 > 0 && hand27[bestDiscardS27] < redS5) {
-                redS5--;
-            }
-        } else {
-            return false;
-        }
-
-        shantenCalcCallCount++;
-        const currentShanten = getShantenMemoized(hand27 as any, localFixedMentsu.length);
-
-        if (currentShanten === 0 && !isRiichi) {
-            const riichiState: RiichiDecisionState = {
-                isMenzen: localFixedMentsu.length === 0,
-                hasDeclaredRiichi: isRiichi,
-                remainingDraws: liveWallLimit - mountainPtr
-            };
-
-            if (shouldDeclareRiichi(riichiState)) {
-                isRiichi = true;
-                isIppatsu = true;
-                scoreAdjustment -= 1000;
-            }
-        }
-        return true;
-    };
-
-    // SIMULATION LOOP
-    let hasReachedTenpai = false;
-    let simLoopSafety = 0;
-    while (
-        mountainPtr < liveWallLimit &&
-        selfDrawCount < selfDrawQuota
-    ) {
-        simLoopSafety++;
-        if (simLoopSafety > 1000) throw new Error("Infinite loop detected in simulation loop");
-
-        pathTurnCount++;
-
-        // My Draw (Compressed: skip 2 opponent tiles)
-        let drawn: Tile | null = null;
-        while (true) {
-            if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) break;
-
-            const typeIdx = mountain[mountainPtr];
-            mountainPtr += 3; // 3人分スキップ
-            selfDrawCount++;
-            diagTurnDraws++;
-
-            trialCounts[typeIdx]--;
-            const tile = TILE_TYPES[typeIdx];
-
-            if (tile === TILES.z4) {
-                diagNukiCounts++;
-                nukidoraCount++;
-                continue;
-            }
-            drawn = tile;
-            break;
-        }
-
-        if (!drawn) break;
-        const sDrawn = toSanmaTile(toNormalFive(drawn));
-        if (sDrawn !== -1) hand27[sDrawn]++;
-        if (drawn === TILES.p5r) redP5++;
-        else if (drawn === TILES.s5r) redS5++;
-
-        if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) isHaitei = true;
-
-        // ======== WIN CHECK IMMEDIATELY AFTER DRAW ========
-        const currentHand = reconstructHand();
-        const patterns = getAgariPatterns(currentHand, localFixedMentsu);
-
-        // 和了判定が実行された回数をカウントする
-        agariCheckCount++;
-
-        if (patterns.length > 0) {
-            const state: GameState = {
-                bakaze: TILES.z1,
-                jikaze: isDealer ? TILES.z1 : TILES.z2,
-                isRiichi,
-                isDoubleRiichi,
-                isIppatsu,
-                isTsumo: true,
-                isRinshan: false,
-                isChankan: false,
-                isHaitei,
-                isHoutei: false,
-                kitaCount: nukidoraCount,
-                doraCount: getCurrentDoraCount(),
-                uraDoraCount: 0,
-                winningTile: drawn,
-                isDealer,
-                turnCount: currentTurn + pathTurnCount,
-                hasCallOccurred: localFixedMentsu.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
-                discardCount: 0
-            };
-
-            if (isRiichi) {
-                // Simulate Ura-dora
-                let tempPool = 0;
-                for (let n = 0; n < 29; n++) tempPool += trialCounts[n];
-
-                const tempCounts = workUraCounts;
-                for (let n = 0; n < 29; n++) tempCounts[n] = trialCounts[n];
-
-                let uraDoraCount = 0;
-                for (let d = 0; d < doraInds.length; d++) {
-                    if (tempPool <= 0) break;
-                    let rand = Math.floor(rng.next() * tempPool);
-                    for (let j = 0; j < 29; j++) {
-                        if (rand < tempCounts[j]) {
-                            const uraInd = TILE_TYPES[j];
-                            const uraDoraValue = getDoraValue(uraInd);
-                            for (let k = 0; k < 27; k++) {
-                                if (toStandardTile(k) === uraDoraValue) uraDoraCount += hand27[k];
-                            }
-                            for (const m of localFixedMentsu) for (const t of m.tiles) if (toNormalFive(t) === uraDoraValue) uraDoraCount++;
-                            tempCounts[j]--;
-                            tempPool--;
-                            break;
-                        }
-                        rand -= tempCounts[j];
-                    }
-                }
-                state.uraDoraCount = uraDoraCount;
-            }
-
-            const result = calculateScore(currentHand, patterns[0], state);
-
-            if (isValidWin(result)) {
-                const { points } = resolveFinalScore(result, state);
-
-                if (DEBUG_MODE && !debugWinLogged) {
-                    console.log("=== WIN DEBUG ===");
-                    console.log({
-                        finalCounts27: Array.from(hand27),
-                        redP5,
-                        redS5,
-                        han: result.han,
-                        fu: result.fu,
-                        point: points + (isRiichi ? 1000 : 0) + scoreAdjustment,
-                        yakuList: result.yakuList.map(y => `${y.name} (${y.han}han${y.isDora ? ', dora' : ''})`)
-                    });
-                    debugWinLogged = true;
-                }
-
-                if (DEBUG_MODE && tileDebugCount <= 1) {
-                    console.log("Win path tiles consumption (sim loop):", {
-                        initial: initialTotalForSummary,
-                        normalDraws: diagTurnDraws,
-                        extraDraws: diagExtraDraws,
-                        nukiCounts: diagNukiCounts,
-                        finalRemaining: initialTotalForSummary - mountainPtr,
-                        isVerified: true
-                    });
-                }
-                if (isTargetDebug && tileDebugCount <= 2) {
-                    console.log(`discard origin: ${tileToString(initialDiscard!)}, agariCheckCount: ${agariCheckCount}, shantenCalcCallCount: ${shantenCalcCallCount} `);
-                }
-                if (isTargetDebug && debugSimCountGlobal <= 5) {
-                    const theoreticalLiveWall = mountain.length - 13;
-                    console.log("WALL_AUDIT_END", {
-                        wallArrayLength: mountain.length,
-                        liveWallLimit,
-                        mountainPtr,
-                        remainingComputed: liveWallLimit - mountainPtr,
-                    });
-                    console.log("THEORETICAL_LIVE_WALL", theoreticalLiveWall);
-                    console.log("TENPAI_AUDIT", {
-                        isAgari: true,
-                        finalShanten: -1,
-                        countedAsTenpai: false
-                    });
-                    console.log("SANMA_WIN_PATH_AUDIT", {
-                        mountainPtr,
-                        diagTurnDraws,
-                        agariTurn: currentTurn + (mountainPtr / 3),
-                        theoreticalLiveWall
-                    });
-                }
-
-                if (liveWallLimit > mountain.length) {
-                    console.error("WALL_ERROR: liveWallLimit exceeds wall length");
-                }
-                if (mountainPtr > liveWallLimit) {
-                    console.error("WALL_ERROR: mountainPtr exceeded liveWallLimit");
-                }
-                // The provided diff for this return block was malformed.
-                // Applying the intended change based on the instruction "Add engineLiveWallLimit to the result type and return it from runSinglePath."
-                // and keeping the existing logic for other fields.
-                return {
-                    type: 'win',
-                    point: points + (isRiichi ? 1000 : 0) + scoreAdjustment,
-                    isTenpai: true,
-                    initialRemainingTiles: initialTotalForSummary,
-                    totalAgariTurnSum: currentTurn + (mountainPtr / 3),
-                    agariCount: 1,
-                    engineLiveWallLimit: liveWallLimit
+            // Win Check
+            const currentHand = reconstructHand();
+            const patterns = getAgariPatterns(currentHand, localFixedMentsuArr);
+            if (patterns.length > 0) {
+                const state: GameState = {
+                    bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
+                    isRiichi, isDoubleRiichi: false, isIppatsu, isTsumo: true,
+                    isRinshan: false, isChankan: false, isHaitei, isHoutei: false,
+                    kitaCount: nukidoraCount, doraCount: getCurrentDoraCount(), uraDoraCount: 0,
+                    winningTile: drawn, isDealer, turnCount: currentTurn + pathTurnCount,
+                    hasCallOccurred: localFixedMentsuArr.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
+                    discardCount: 0
                 };
+
+                if (isRiichi) {
+                    let tempPool = 0; for (let n = 0; n < 29; n++) tempPool += trialCounts[n];
+                    const tempCounts = workUraCounts; for (let n = 0; n < 29; n++) tempCounts[n] = trialCounts[n];
+                    let udc = 0;
+                    // Sanma dead wall has (14 - doraIndicators.length) unseen tiles.
+                    // We sample as many ura indicators as there are dora indicators.
+                    for (let d = 0; d < doraIndicators.length; d++) {
+                        if (tempPool <= 0) break;
+                        let r = Math.floor(rng.next() * tempPool);
+                        for (let j = 0; j < 29; j++) {
+                            if (r < tempCounts[j]) {
+                                const val = getDoraValue(TILE_TYPES[j]);
+                                // Check counts in hand and fixed segments
+                                for (let k = 0; k < 27; k++) if (toStandardTile(k) === val) udc += hand27[k];
+                                for (const m of localFixedMentsuArr) for (const t of m.tiles) if (toNormalFive(t) === val) udc++;
+                                tempCounts[j]--; tempPool--; break;
+                            }
+                            r -= tempCounts[j];
+                        }
+                    }
+                    state.uraDoraCount = udc;
+                }
+
+                const result = calculateScore(currentHand, patterns[0], state);
+                if (validateAgari(result)) {
+                    const { points } = resolveFinalScore(result, state);
+                    if (DEBUG_WIN) {
+                        console.log("WIN_DEBUG", {
+                            riichi: state.isRiichi,
+                            ippatsu: state.isIppatsu,
+                            han: result.han,
+                            ura: state.uraDoraCount,
+                            yaku: result.yakuList.map(y => `${y.name}(${y.han})`).join(","),
+                            score: points
+                        });
+                    }
+                    return {
+                        type: 'win', point: points + scoreAdjustment, isTenpai: true,
+                        initialRemainingTiles: initialTotalForSummary, totalAgariTurnSum: currentTurn + pathTurnCount,
+                        agariCount: 1, engineLiveWallLimit: liveWallLimit
+                    };
+                }
             }
+
+            // Discard
+            const bestD = findBestDiscard27(hand27, localFixedMentsuArr.length, trialCounts, rng, tenpaiDepth);
+            if (bestD !== -1) {
+                hand27[bestD]--;
+                const t34 = toStandardTile(bestD);
+                if (t34 === TILES.p5 && redP5 > 0 && hand27[bestD] < redP5) redP5--;
+                else if (t34 === TILES.s5 && redS5 > 0 && hand27[bestD] < redS5) redS5--;
+
+                // Auto-riichi if Dama
+                if (!isRiichi && localFixedMentsuArr.length === 0 && getShantenMemoized(hand27 as any, 0) === 0) {
+                    isRiichi = true; isIppatsu = true; scoreAdjustment -= 1000;
+                }
+            } else { break; }
+            isIppatsu = false; // Ippatsu reset after one full cycle (draw + discard)
         }
-        shantenCalcCallCount++;
-        if (isTargetDebug && tileDebugCount <= 2) {
-            console.log("HAND27 BEFORE SHANTEN", Array.from(hand27));
-        }
-        const currentS = getShantenMemoized(hand27 as any, localFixedMentsu.length);
-        if (!hasReachedTenpai && currentS <= 0) {
-            hasReachedTenpai = true;
-            localTenpaiDepth++;
-            if (isTargetDebug && tileDebugCount <= 10) {
-                const bd = getShantenBreakdown27(Array.from(hand27), localFixedMentsu.length);
-                const handType = bd.normal <= 0 ? (bd.chiitoi <= 0 ? "normal/chiitoi" : "normal") : (bd.chiitoi <= 0 ? "chiitoi" : "unknown");
-                console.log(">>> TENPAI REACHED", tileToString(initialDiscard!), { handType });
-            }
-        }
 
-        if (isRiichi) {
-            // Discard the drawn tile directly
-            const sDraw = toSanmaTile(toNormalFive(drawn));
-            if (sDraw !== -1) hand27[sDraw]--;
-            if (drawn === TILES.p5r) redP5--;
-            else if (drawn === TILES.s5r) redS5--;
-            isIppatsu = false;
-        }
-        else if (!performGreedyDiscard(localTenpaiDepth)) break;
-    }
-
-    if (DEBUG_MODE && tileDebugCount <= 1) {
-        console.log("LOOP_END_REASON", {
-            mountainPtr,
-            liveWallLimit,
-            remaining: liveWallLimit - mountainPtr
-        });
-    }
-
-    if (DEBUG_MODE && tileDebugCount <= 1) {
-        console.log("Draw path tiles consumption (final):", {
-            initial: liveWallLimit,
-            normalDraws: diagTurnDraws,
-            extraDraws: diagExtraDraws,
-            nukiCounts: diagNukiCounts,
-            finalRemaining: liveWallLimit - mountainPtr,
-            isVerified: true
-        });
-    }
-
-    if (DEBUG_MODE && debugSimCountGlobal <= 1) {
-        console.log("=== PATH END DEBUG ===");
-        console.log({
-            initialMountainSize: liveWallLimit,
-            remainingMountain: liveWallLimit - mountainPtr,
-            nukiTotalCount: diagNukiCounts,
-            agariCheckCount
-        });
-    }
-
-    if (isTargetDebug && debugSimCountGlobal <= 2) {
-        console.log(`discard origin: ${tileToString(initialDiscard!)}, agariCheckCount: ${agariCheckCount}, shantenCalcCallCount: ${shantenCalcCallCount} `);
-    }
-    shantenCalcCallCount++;
-    const finalShanten = getShantenMemoized(hand27 as any, localFixedMentsu.length);
-    const isTenpai = finalShanten <= 0;
-
-    if (isTargetDebug && debugSimCountGlobal <= 5) {
-        const theoreticalLiveWall = mountain.length - 13;
-        console.log("WALL_AUDIT_END", {
-            wallArrayLength: mountain.length,
-            liveWallLimit,
-            mountainPtr,
-            remainingComputed: liveWallLimit - mountainPtr,
-        });
-        console.log("THEORETICAL_LIVE_WALL", theoreticalLiveWall);
-        console.log("TENPAI_AUDIT", {
-            isAgari: false,
-            finalShanten,
-            countedAsTenpai: !false && finalShanten === 0
-        });
-    }
-
-    if (liveWallLimit > mountain.length) {
-        console.error("WALL_ERROR: liveWallLimit exceeds wall length");
-    }
-    if (mountainPtr > liveWallLimit) {
-        console.error("WALL_ERROR: mountainPtr exceeded liveWallLimit");
-    }
-
-    if (isTargetDebug && debugSimCountGlobal <= 3) {
-        console.log("SANMA_SELF_DRAW_END", {
-            selfDrawCount,
-            mountainPtr,
-            remainingPhysical: liveWallLimit - mountainPtr
-        });
-    }
-
-    return {
-        type: 'draw',
-        point: scoreAdjustment + (isTenpai ? 1000 : -1000),
-        isTenpai,
-        initialRemainingTiles: initialTotalForSummary, // Assuming this is the correct variable for initialRemainingTiles
-        totalAgariTurnSum: 0,
-        agariCount: 0,
-        engineLiveWallLimit: liveWallLimit
+        const isTenpai = getShantenMemoized(hand27 as any, localFixedMentsuArr.length) <= 0;
+        return {
+            type: 'draw', point: scoreAdjustment + (isTenpai ? 1000 : -1000), isTenpai,
+            initialRemainingTiles: initialTotalForSummary, totalAgariTurnSum: 0, agariCount: 0,
+            engineLiveWallLimit: liveWallLimit
+        };
     };
+
+    const result = executePath();
+    return result;
 }
 
 export function evaluateWinningHand(

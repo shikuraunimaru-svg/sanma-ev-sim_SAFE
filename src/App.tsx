@@ -61,6 +61,7 @@ export default function App() {
       console.log("Main thread received:", e.data);
       const { type, results: data, winResult: winData, summary, csvReport: report } = e.data;
       if (type === 'RESULT' && data) {
+        console.log("MAIN_THREAD_RESULT_SAMPLE", data[0]);
         setResults(data);
         if (summary && summary.totalTimeMs !== undefined) {
           console.log(`Simulation time: ${summary.totalTimeMs.toFixed(2)} ms`);
