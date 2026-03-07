@@ -54,7 +54,8 @@ export function calculateScore(
     const displayYakuList = [...yakuList];
     if (!yakuman) {
         han += state.doraCount;
-        han += state.uraDoraCount; // Add Ura Dora
+        han += state.uraDoraCount;
+        han += state.kitaCount; // 抜き北を翻数に加算
         if (state.doraCount > 0) {
             displayYakuList.push({ name: 'Dora', han: state.doraCount, isDora: true });
         }
