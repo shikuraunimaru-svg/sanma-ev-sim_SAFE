@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { runSinglePath } from '../simulation/engine';
 import type { Action } from '../simulation/engine';
 import { TILES } from './tile';

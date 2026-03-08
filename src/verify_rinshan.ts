@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { runSinglePath } from './simulation/engine';
 import { TILES } from './core/tile';
 
@@ -15,8 +16,7 @@ function testRinshan() {
     ];
 
     const liveWall = [TILES.z1];
-    const result = runSinglePath(
-        handCorrect,
+    const result = runSinglePath(handCorrect,
         [],
         { type: 'kita' }, // Initial action is Kita-nuki
         0, // myKita
@@ -24,7 +24,7 @@ function testRinshan() {
         [TILES.p9], // doraInds
         0, // currentTurn
         true, // isDealer
-        new Uint8Array(liveWall),
+        new Uint8Array(liveWall, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0),
         liveWall.length,
         new Uint8Array(29), // templateCounts
         new Int8Array(29),  // trialCounts

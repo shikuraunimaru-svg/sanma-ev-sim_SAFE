@@ -12,11 +12,15 @@ function testYaku(name: string, hand: number[], expectedYaku: string[], configOv
         fixedMentsu: [],
         myDiscards: [],
         doraIndicators: [],
-        kitaCount: 0,
+        myKita: 0,
+        otherKita: 0,
         trials: 1,
         currentTurn: 5,
         isDealer: false, // Child
         validationMode: false,
+        liveWallLimit: 70,
+        selfEffectiveWallCount: 44,
+        myKanCount: 0,
         ...configOverrides
     };
 

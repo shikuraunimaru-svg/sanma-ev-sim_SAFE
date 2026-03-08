@@ -5,15 +5,16 @@ if (DEBUG_LOG) {
     console.log("WORKER_BUILD_ID", Date.now());
     console.log("FAST_WIN_EVAL_ACTIVE"); // Phase71: scoreWinningHandFast が有効
 }
-import { toNormalFive, toSanmaTile, TILES, tileToString, isRedFive } from '../core/tile';
+import { toNormalFive, TILES, tileToString, isRedFive } from '../core/tile';
 import type { Tile } from '../core/tile';
-import { getShantenBreakdown, calculateShanten as calculateShantenCore } from '../core/shanten';
+import { calculateShanten as calculateShantenCore } from '../core/shanten';
 
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, getWinningTiles, initShantenCache, clearShantenCache, getShantenMemoized, shuffleInPlace, resetDebugCounters, getShantenBreakdown27, simpleHash, createSummary, getPlayableWallCount } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, initWallPool, selectUCBNode, pruneWeakNodes, earlyStop } = Engine;
+type UCBNode = Engine.UCBNode;
 // fullEvalCount は Engine モジュール変数として直接参照 (Engine.fullEvalCount)
 
-import type { SimulationConfig, Action, DiscardResult, SimulationSummary } from './engine';
+import type { SimulationConfig, Action } from './engine';
 
 const calculateShanten = (hand: Tile[] | Int8Array, fixedCount: number) => {
     if (hand instanceof Int8Array) return getShantenMemoized(hand, fixedCount);
@@ -30,9 +31,8 @@ function removeOneTile(hand: Tile[], tile: Tile): Tile[] {
     return copy;
 }
 
-const LOOKAHEAD_ENABLED = false; // Flag to easily toggle lookahead on/off
-
 if (typeof self !== 'undefined') {
+
     self.onmessage = (e: MessageEvent) => {
         try {
             const { type, config } = e.data;
@@ -114,6 +114,13 @@ export function runBatchSimulations(config: SimulationConfig) {
         const winResult = evaluateWinningHand(myHand, config);
         if (winResult) {
             const summary = createSummary(config, 108);
+            // The instruction's code edit seems to be for a different part of the simulation flow.
+            // The `initialShanten === -1` block is an early exit for an already winning hand,
+            // which sends a 'WIN' message, not 'COMPLETE'.
+            // The instruction asks to call `saveStateCache` before the 'COMPLETE' message.
+            // Assuming the intent is to add this logic before the *final* 'COMPLETE' message
+            // at the end of the simulation, not this early exit.
+            // Therefore, no change is applied here based on the provided code snippet.
             self.postMessage({ type: 'WIN', winResult, summary });
             return;
         }
@@ -156,19 +163,26 @@ export function runBatchSimulations(config: SimulationConfig) {
     const drawsConsumed = Math.max(0, (currentTurn - 1) * 3);
     const { templateMountain, templateCounts } = buildWallTemplate(visible, drawsConsumed);
 
+    // Phase 76: Wall Pool の初期化と保証
+    // ターンの進行により templateMountain の内容（可視牌など）が変わるため、
+    // プールが空の場合だけでなく毎ターン更新するのが安全です。
+    initWallPool(templateMountain);
+    if (DEBUG_LOG) {
+        console.log("WallPool initialized:", wallPool.length);
+    }
+
     if (DEBUG_LOG) {
         console.log("WALL_TEMPLATE_BUILT", templateMountain.length); // シミュレーション全体で1回だけ出力
     }
 
     const templateLen = templateMountain.length;
-    const mountainSize = templateLen; // For logging backwards compatibility
-
     // liveWallLimit / selfEffectiveWallCount の計算
     const TOTAL_WALL = 108;
     const DEAD_WALL_TOTAL = 14;
     const playerHandCount = config.myHand.length + (config.fixedMentsu.length * 4);
     const doraIndicatorCount = config.doraIndicators.length;
     const totalNukiCount = config.myKita + config.otherKita;
+
     const wallAfterVisibleRemoval = TOTAL_WALL - playerHandCount - doraIndicatorCount - totalNukiCount;
     const remainingWall = wallAfterVisibleRemoval - drawsConsumed;
     const deadWallEffectiveCount = DEAD_WALL_TOTAL - doraIndicatorCount;
@@ -187,566 +201,190 @@ export function runBatchSimulations(config: SimulationConfig) {
         });
     }
 
+    const allNodes: UCBNode[] = possibleActions.map(a => ({
+        action: a,
+        visits: 0,
+        totalEV: 0,
+        meanEV: 0,
+        sumEV: 0,
+        sumEV2: 0,
+        winCount: 0,
+        totalPoints: 0,
+        tenpaiCount: 0
+    }));
 
+    let activeNodes: UCBNode[] = [...allNodes];
 
+    // UCB のメインループパラメータ
+    const isTenpai = (initialShanten === 0);
+    const globalHardLimit = isTenpai ? 60000 : 30000;
+    const TOTAL_TRIALS = Math.min(config.trials ?? 15000, globalHardLimit);
 
-    let results: DiscardResult[] = possibleActions.map(action => {
-        const afterHand = action.type === 'discard' ? removeOneTile(myHand, (action as any).tile) : myHand;
-        const workHand = new Int8Array(27);
-        for (const t of afterHand) {
-            const s = toSanmaTile(toNormalFive(t));
-            if (s !== -1) workHand[s]++;
-        }
-        const bd = getShantenBreakdown27(workHand as any, fixedMentsu.length);
-        const normalShanten = bd.normal;
-        const chiitoiShanten = bd.chiitoi;
-        const minShanten = Math.min(normalShanten, chiitoiShanten, bd.kokushi);
-        const actionTile = (action as any).tile;
-        const tileName = (DEBUG_LOG && actionTile !== undefined) ? tileToString(actionTile) : (action.type === 'discard' ? "discard" : action.type);
-
-        if (DEBUG_LOG && tileName === "6s") {
-            console.log("DEBUG_6s_SHANTEN",
-                normalShanten,
-                chiitoiShanten,
-                minShanten
-            );
-        }
-
-        let logTile = tileName;
-        if (tileName === "5z") logTile = "白";
-        else if (tileName === "6z") logTile = "發";
-        else if (tileName === "7z") logTile = "中";
-
-        if (DEBUG_LOG && ["1m", "9m", "白", "發", "中"].includes(logTile)) {
-            console.log("SYMMETRY_SHANTEN_CHECK", logTile, {
-                normal: normalShanten,
-                chiitoi: chiitoiShanten
-            });
-            const effectiveTiles = calculateEffectiveTiles(afterHand, fixedMentsu.length, visible, myKita, otherKita);
-            const totalUkeire = effectiveTiles.reduce((acc, curr) => acc + curr.count, 0);
-            console.log("SYMMETRY_EFFECTIVE_TILES", logTile, effectiveTiles);
-            console.log("SYMMETRY_UKEIRE_COUNT", logTile, totalUkeire);
-        }
-
-        return {
-            action,
-            winRate: 0, avgScore: 0, ev: 0, evMean: 0, ronRate: 0, tenpaiRate: 0,
-            shantenBefore: initialShanten,
-            shantenAfter: minShanten,
-            trialCount: 0, previousMeanEV: 0, stableCount: 0, converged: false,
-            totalScore: 0, totalScore2: 0, totalWinPoints: 0, wins: 0, tenpaiCount: 0,
-            layerA_totalScore: 0, layerB_totalScore: 0, layerA_trials: 0, layerB_trials: 0,
-            stdError: 0, confidence95: 0, m2: 0, ciLower: 0, ciUpper: 0,
-            reachedDiff: false, totalAgariTurnSum: 0, agariCount: 0, averageAgariTurn: null
-        } as any;
-    });
-
-    // Explicitly log Lookahead trigger condition for all arms
-    results.forEach(res => {
-        const actionTile = (res.action as any).tile;
-
-        if (DEBUG_LOG) {
-            const tileName = actionTile !== undefined ? tileToString(actionTile) : res.action.type;
-            const bd = getShantenBreakdown27(workHand27 as any, fixedMentsu.length);
-            const normalShanten = bd.normal;
-            const chiitoiShanten = bd.chiitoi;
-            const minShanten = Math.min(normalShanten, chiitoiShanten, bd.kokushi);
-            const twoStepCondition = (LOOKAHEAD_ENABLED && initialShanten === 1);
-
-            if (tileName === "6s") {
-                console.log("DEBUG_6s_CONDITION",
-                    normalShanten,
-                    chiitoiShanten,
-                    minShanten,
-                    twoStepCondition
-                );
-            }
-        }
-    });
-
-    const updateStats = (res: any, point: number) => {
-        res.trialCount++;
-        const delta = point - res.ev;
-        res.ev += delta / res.trialCount;
-        const delta2 = point - res.ev;
-        res.m2 += delta * delta2;
-
-        res.evMean = res.ev;
-        if (res.trialCount > 1) {
-            const variance = Math.max(1e-9, res.m2 / (res.trialCount - 1));
-            res.stdError = Math.sqrt(variance / res.trialCount);
-        } else {
-            res.stdError = Infinity;
-        }
-    };
-
-    const mountainBuffer = new Uint8Array(templateLen);
+    let totalTrials = 0;
     const workTrialCounts = new Int8Array(29);
     const workHand27 = new Int8Array(27);
     const workUraCounts = new Int8Array(29);
 
-    const runSingleTrialForAction = (res: any, mountainArr: Uint8Array) => {
-        const afterHand = res.action.type === 'discard' ? removeOneTile(myHand, res.action.tile) : myHand;
+    if (DEBUG_LOG) {
+        console.log(`[UCB1 Trial Start] Budget: ${TOTAL_TRIALS}, InitCandidates: ${allNodes.length}`);
+    }
 
-        const mHashStr = simpleHash(mountainArr, templateLen);
-        const mHash = parseInt(mHashStr, 16) || 0;
-        const seed = (mHash + res.trialCount) >>> 0;
+    let initialRemainingTiles = 0;
 
-        const result = runSinglePath(
-            afterHand, fixedMentsu, res.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, mountainArr, templateLen, liveWallLimit, selfEffectiveWallCount,
-            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, 0 // Start with tenpaiDepth 0
-        );
-        if (res.trialCount === 0) {
-            res.initialRemainingTiles = result.initialRemainingTiles;
-            if (result.engineLiveWallLimit !== liveWallLimit) {
-                console.error("LIVE_WALL_SYNC_ERROR", {
-                    worker: liveWallLimit,
-                    engine: result.engineLiveWallLimit
-                });
+    let stopReason = "BUDGET_EXHAUSTED";
+
+    while (totalTrials < TOTAL_TRIALS) {
+        // 定期的な Pruning
+        if (totalTrials > 0 && totalTrials % 500 === 0) {
+            activeNodes = pruneWeakNodes(activeNodes);
+
+            // 候補が1つになったらそこで終了
+            if (activeNodes.length <= 1) {
+                stopReason = "ALL_PRUNED";
+                break;
+            }
+
+            // Early Stop 判定
+            if (earlyStop(activeNodes)) {
+                stopReason = "EARLY_STOP";
+                break;
             }
         }
 
-        updateStats(res, result.point);
-        if (result.type === 'win') {
-            res.wins++;
-            res.totalWinPoints += result.point;
+        // 各ノード最低50回は探索を保証する
+        let selectedNode: UCBNode | null = null;
+        for (const n of activeNodes) {
+            if (n.visits < 50) {
+                selectedNode = n;
+                break;
+            }
         }
-        if (result.isTenpai) res.tenpaiCount++;
 
-        res.winRate = res.wins / res.trialCount;
-        res.avgScore = res.wins > 0 ? res.totalWinPoints / res.wins : 0;
-        res.tenpaiRate = res.tenpaiCount / res.trialCount;
-        res.agariRate = res.winRate;
-        return result;
-    };
+        const node = selectedNode ?? selectUCBNode(activeNodes);
 
-    const simulateWithFixedMountain = (res: any, mountainArr: Uint8Array, seed: number) => {
-        const afterHand = res.action.type === 'discard' ? removeOneTile(myHand, res.action.tile) : myHand;
+        // WallPool からランダムな山を取得
+        const randomWallIdx = Math.floor(Math.random() * wallPool.length);
+        const wall = wallPool[randomWallIdx];
+
+        const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+
+        // Seed は totalTrials と actionIndex などから適当に決めるか、engine のシード生成に任せる
+        const seed = totalTrials >>> 0;
+
         const result = runSinglePath(
-            afterHand, fixedMentsu, res.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, mountainArr, templateLen, liveWallLimit, selfEffectiveWallCount,
+            afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+            currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
             templateCounts as any, workTrialCounts, workHand27, workUraCounts,
             seed, 0
         );
-        return result;
-    };
 
-    const generateMountainWithSeed = (wall: Uint8Array, seed: number) => {
-        for (let i = 0; i < wall.length; i++) wall[i] = templateMountain[i];
-        let state = seed >>> 0;
-        const nextRand = () => {
-            let t = state += 0x6D2B79F5;
-            t = Math.imul(t ^ (t >>> 15), t | 1);
-            t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        if (totalTrials === 0) {
+            initialRemainingTiles = result.initialRemainingTiles;
+        }
+
+        const ev = result.point;
+
+        node.visits++;
+        node.totalEV += ev;
+        node.meanEV = node.totalEV / node.visits;
+        node.sumEV += ev;
+        node.sumEV2 += ev * ev;
+
+        // === 判定コード修正 (流局テンパイ対応・和了含む) ===
+        // console.log("shantenEnd", result.finalShanten); // 大量に出るので一時的にコメントアウト推奨ですが指示通り追加します。もし重い場合は消してください。
+        if (DEBUG_LOG) {
+            console.log("shantenEnd", result.finalShanten);
+        }
+
+        if (result.finalShanten === -1) {
+            node.winCount++;
+            node.tenpaiCount++;   // 和了は聴牌でもある
+            node.totalPoints += result.point;
+        } else if (result.finalShanten === 0) {
+            node.tenpaiCount++;
+        }
+
+        totalTrials++;
+    }
+
+    // ========== UCB Kết Quả の集計 ==========
+    allNodes.sort((a, b) => b.meanEV - a.meanEV);
+
+    const results: any[] = allNodes.map(node => {
+        const winRate = node.visits > 0 ? node.winCount / node.visits : 0;
+        const avgPoint = node.winCount > 0 ? node.totalPoints / node.winCount : 0;
+        const tenpaiRate = node.visits > 0 ? node.tenpaiCount / node.visits : 0;
+
+        if (DEBUG_LOG) {
+            console.log("rates", {
+                trialCount: node.visits,
+                winCount: node.winCount,
+                tenpaiCount: node.tenpaiCount,
+                winRate,
+                tenpaiRate
+            });
+        }
+
+        const variance = node.visits > 1 ? (node.sumEV2 / node.visits) - (node.meanEV * node.meanEV) : 0;
+        const stdDev = Math.sqrt(Math.max(variance, 0));
+        const ci = node.visits > 1 ? 1.96 * stdDev / Math.sqrt(node.visits) : 0;
+
+        return {
+            action: node.action,
+            ev: node.meanEV,
+            evMean: node.meanEV,
+            trialCount: node.visits,
+            winRate,
+            avgScore: avgPoint,
+            tenpaiRate,
+            shantenBefore: initialShanten,
+            shantenAfter: calculateShanten(node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand, fixedMentsu.length),
+            converged: false,
+            totalAgariTurnSum: 0,
+            agariCount: 0,
+            stdError: stdDev / Math.sqrt(Math.max(node.visits, 1)),
+            confidence95: ci,
+            ciLower: node.meanEV - ci,
+            ciUpper: node.meanEV + ci,
+            lcb: node.meanEV - ci
         };
-        for (let i = wall.length - 1; i > 0; i--) {
-            const j = Math.floor(nextRand() * (i + 1));
-            const temp = wall[i];
-            wall[i] = wall[j];
-            wall[j] = temp;
-        }
-    };
-
-    // Ultimate Successive Elimination with Common Random Numbers (CRN)
-    const allCandidates = results.map(r => ({ ...r, m2: 0, ev: 0, trialCount: 0, lastTrialReward: 0 }));
-    let activeCandidates = [...allCandidates];
-
-    // Config based on hand state
-    const isTenpai = (initialShanten === 0);
-    const epsilon = 0.000001; // isTenpai ? 0.008 : 0.015;
-    const globalHardLimit = isTenpai ? 60000 : 30000; // Total trials across the whole evaluation
-
-    if (DEBUG_LOG) {
-        console.log(`Ultimate CRN SE Config: state=${isTenpai ? 'Tenpai' : 'Ishanten'}, epsilon=${epsilon}, hardLimit=${globalHardLimit}`);
-    }
-
-    const getZ = (n: number) => 1.96 + 0.1 * Math.log2(n || 1);
-    let stopReason = "unknown";
-    let totalExecutions = 0;
-
-    if (DEBUG_LOG) {
-        console.log(`[Trial Start] mountainSize: ${mountainSize} (Total Nuki: ${totalKitaCount})`);
-    }
-
-    const masterWall = new Uint8Array(templateLen);
-
-    if (DEBUG_LOG) {
-        console.log("SANMA_FINAL_WALL_LENGTH", masterWall.length);
-    }
-    let diffStats = { mean: 0, sumSq: 0, n: 0, variance: 0 };
-
-    // === Budget control ===
-    const SR_BUDGET_RATIO = 0.35;   // SRは全体の35%まで
-    const SR_BUDGET_CAP = Math.floor(globalHardLimit * SR_BUDGET_RATIO);
-    let srUsedTrials = 0;
-
-    // SR Boundaries (Theoretical Successive Rejects Formula)
-    const initialK = activeCandidates.length;
-    const initialT = SR_BUDGET_CAP;
-    const H_K = Array.from({ length: initialK }, (_, i) => 1 / (i + 1)).reduce((a, b) => a + b, 0);
-
-    let remainingBudget = globalHardLimit;
-    let phaseTrialsLeft = Math.floor((Math.max(0, initialT - initialK) / H_K) * (1 / initialK));
-
-    if (srUsedTrials + phaseTrialsLeft > SR_BUDGET_CAP) {
-        phaseTrialsLeft = SR_BUDGET_CAP - srUsedTrials;
-    }
-
-    // ===== Phase 1: Successive Rejects =====
-    while (activeCandidates.length > 2 && remainingBudget > 0) {
-        // 1. Generate CRN Master Wall for this trial
-        for (let j = 0; j < templateLen; j++) masterWall[j] = templateMountain[j];
-        shuffleInPlace(masterWall, masterWall.length);
-
-        // 2. Evaluate all active candidates on the exact same wall
-        for (const candidate of activeCandidates) {
-            // Provide a clean copy of the master wall to prevent mutation side-effects
-            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
-            const pathResult = runSingleTrialForAction(candidate, mountainBuffer);
-            candidate.lastTrialReward = pathResult.point;
-            candidate.totalAgariTurnSum += pathResult.totalAgariTurnSum;
-            candidate.agariCount += pathResult.agariCount;
-            totalExecutions++;
-        }
-
-        phaseTrialsLeft--;
-        remainingBudget--;
-        srUsedTrials++;
-
-        // 3. SR Phase Allocation Check
-        if (phaseTrialsLeft <= 0) {
-            if (DEBUG_LOG) {
-                console.log(`SR Phase complete. Remaining budget: ${remainingBudget}. Candidates before drop: ${activeCandidates.length}`);
-            }
-            activeCandidates.sort((a, b) => b.ev - a.ev);
-            const worst = activeCandidates.pop();
-
-            if (DEBUG_LOG) {
-                const actionType = worst?.action?.type;
-                const tileStr = (actionType === 'discard' && worst?.action?.tile !== undefined) ? tileToString(worst.action.tile) : actionType;
-                console.log(`Dropped worst candidate: ${tileStr} (ev: ${worst?.ev})`);
-            }
-
-            if (activeCandidates.length === 2) {
-                if (DEBUG_LOG) console.log("SR reached 2 candidates → ENTER DIFF MODE");
-                break;
-            }
-
-            const m = activeCandidates.length;
-            let trialsToAllocate = Math.floor((Math.max(0, initialT - initialK) / H_K) * (1 / m));
-
-            // --- SR budget cap enforcement ---
-            if (srUsedTrials + trialsToAllocate > SR_BUDGET_CAP) {
-                trialsToAllocate = SR_BUDGET_CAP - srUsedTrials;
-            }
-
-            if (trialsToAllocate <= 0) {
-                if (DEBUG_LOG) console.log(`SR budget cap reached → ENTER DIFF MODE (srUsed=${srUsedTrials}/${SR_BUDGET_CAP})`);
-                break;
-            }
-
-            phaseTrialsLeft = trialsToAllocate;
-            if (DEBUG_LOG) console.log(`Next SR Phase trials allocated: ${phaseTrialsLeft}`);
-        }
-    }
-
-    if (remainingBudget <= 0 && activeCandidates.length > 2) {
-        stopReason = "HARD_LIMIT";
-        if (DEBUG_LOG) console.log(`=== SR BUDGET DEPLETED ===`);
-    }
-
-    if (activeCandidates.length > 2) {
-        if (DEBUG_LOG) console.log(`[Safety] Forcing down to 2 candidates to enter DIFF MODE.`);
-        activeCandidates.sort((a, b) => b.ev - a.ev);
-        activeCandidates.length = 2;
-    }
-
-    // ===== Relative DIFF thresholds =====
-    const STRONG_RELATIVE = 0.05;  // 5%
-    const MID_RELATIVE = 0.03;  // 3%
-
-    const Z_STRONG = 2.33;  // 99% one-sided
-    const Z_MID = 1.64;  // 90% one-sided
-
-    const MIN_DIFF_TRIALS = 3500;
-
-    // ===== Phase 2: DIFF MODE =====
-    if (activeCandidates.length === 2 && remainingBudget > 0) {
-        if (DEBUG_LOG) console.log("DIFF MODE START");
-        activeCandidates.forEach(c => c.reachedDiff = true);
-        diffStats = { n: 0, mean: 0, sumSq: 0, variance: 0 };
-        const baseSeed = Math.floor(Math.random() * 0xFFFFFFFF);
-
-        while (remainingBudget > 0) {
-            const [candidateA, candidateB] = activeCandidates;
-            const seed = (baseSeed + diffStats.n) >>> 0;
-
-            // 1. Generate CRN Master Wall for this trial (only once per loop)
-            generateMountainWithSeed(masterWall, seed);
-
-            // 2. Evaluate A
-            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
-            const resA = simulateWithFixedMountain(candidateA, mountainBuffer, seed);
-            const rewardA = resA.point;
-            candidateA.totalAgariTurnSum += resA.totalAgariTurnSum;
-            candidateA.agariCount += resA.agariCount;
-
-            // 3. Evaluate B (Same Master Wall, Same Seed)
-            for (let j = 0; j < templateLen; j++) mountainBuffer[j] = masterWall[j];
-            const resB = simulateWithFixedMountain(candidateB, mountainBuffer, seed);
-            const rewardB = resB.point;
-            candidateB.totalAgariTurnSum += resB.totalAgariTurnSum;
-            candidateB.agariCount += resB.agariCount;
-
-            const diff = rewardA - rewardB;
-            diffStats.n++;
-            const delta = diff - diffStats.mean;
-            diffStats.mean += delta / diffStats.n;
-            const delta2 = diff - diffStats.mean;
-            diffStats.sumSq += delta * delta2;
-            diffStats.variance = diffStats.n > 1 ? diffStats.sumSq / (diffStats.n - 1) : 0;
-
-            if (diffStats.n > 1) {
-                const baseEV = Math.max(candidateA.ev, candidateB.ev);
-
-                if (baseEV <= 0) {
-                    // Safety guard for pathological states
-                    remainingBudget--;
-                    continue;
-                }
-
-                const meanDiff = diffStats.mean;
-                const variance = diffStats.variance;
-                const stdError = Math.sqrt(variance / diffStats.n);
-
-                // Strong confidence (99%)
-                const lcbStrong = meanDiff - Z_STRONG * stdError;
-                const relativeLCBStrong = lcbStrong / baseEV;
-
-                // Medium confidence (90%)
-                const lcbMid = meanDiff - Z_MID * stdError;
-                const relativeLCBMid = lcbMid / baseEV;
-
-                // Relative mean
-                const relativeMean = meanDiff / baseEV;
-
-                if (DEBUG_LOG && diffStats.n % 200 === 0) {
-                    console.log(`DIFF_STATS n: ${diffStats.n} mean: ${meanDiff.toFixed(2)} relMidLCB: ${(relativeLCBMid * 100).toFixed(2)}%`);
-                }
-
-                // === STRONG ZONE (≥5%) ===
-                if (relativeLCBStrong > STRONG_RELATIVE) {
-                    stopReason = "STRONG_WIN";
-                    if (DEBUG_LOG) console.log("=== DIFF END: STRONG_WIN (≥5%) ===");
-                    break;
-                }
-
-                // === MID ZONE (3–5%) ===
-                if (relativeLCBMid > MID_RELATIVE) {
-                    stopReason = "MID_WIN";
-                    if (DEBUG_LOG) console.log("=== DIFF END: MID_WIN (≥3%) ===");
-                    break;
-                }
-
-                // === SMALL DIFF STOP (<3%) ===
-                if (diffStats.n >= MIN_DIFF_TRIALS && Math.abs(relativeMean) < MID_RELATIVE) {
-                    stopReason = "SMALL_DIFF_STOP";
-                    if (DEBUG_LOG) console.log("=== DIFF END: SMALL_DIFF_STOP (<3%) ===");
-                    break;
-                }
-            }
-
-            remainingBudget--;
-        }
-
-        if (remainingBudget <= 0 && stopReason !== "STRONG_WIN" && stopReason !== "MID_WIN" && stopReason !== "SMALL_DIFF_STOP") {
-            stopReason = "HARD_LIMIT";
-            if (DEBUG_LOG) console.log(`=== DIFF BUDGET DEPLETED ===`);
-        }
-    }
-
-    // =========================================================
-    // Phase72: Phase2 — Non-CRN Final Comparison
-    // Phase1 で残った候補の中から top3 を選び、
-    // 独立乱数（山共有なし）で 5000 試行ずつ再評価する。
-    // =========================================================
-    const FINAL_TRIALS = 5000;
-
-    // Phase1 終了時の全候補から EV 上位 3 を選択
-    // ★ sort-slice ではなくインデックスで取得 → Phase2 stats が allCandidates に直接書き込まれる
-    const topIndices = allCandidates
-        .map((c, i) => ({ i, ev: c.ev }))
-        .sort((a, b) => b.ev - a.ev)
-        .slice(0, 3)
-        .map(x => x.i);
-    const finalCandidates = topIndices.map(i => allCandidates[i]);
-
-    if (DEBUG_LOG) {
-        console.log("CRN_PHASE1_END", {
-            RemainingCandidates: finalCandidates.length,
-            topIndices,
-            topEVs: finalCandidates.map(c => c.ev.toFixed(1))
-        });
-        console.log("CRN_PHASE2_START", { Candidates: finalCandidates.length, TrialsPerCandidate: FINAL_TRIALS });
-    }
-
-    // Phase2 用の専用ワークバッファ（masterWall は Phase1 で使用済みのため別途用意）
-    const phase2Wall = new Uint8Array(templateLen);
-    const phase2Buffer = new Uint8Array(templateLen);
-
-    // ★ Phase2 カウンタをリセット（Phase1 の蓄積をゼロから出直す）
-    resetDebugCounters(); // fullEvalCount も内部でリセット
-    totalExecutions = 0;
-
-    // ★ BEFORE RESET 診断ログ（Phase1 の蓄積量を確認）
-    if (DEBUG_LOG) {
-        console.log("PHASE2_STATS_BEFORE_RESET", finalCandidates.map(c => ({
-            tile: (c.action as any).tile !== undefined
-                ? tileToString((c.action as any).tile) + ((c.action as any).riichi ? "(riichi)" : "")
-                : c.action.type,
-            trialCount: c.trialCount,
-            wins: c.wins,
-            scoreSum: c.totalWinPoints,  // totalWinPoints が scoreSum に相当
-            evMean: c.evMean
-        })));
-    }
-
-    for (const candidate of finalCandidates) {
-        // ★ stats オブジェクトを丸ごと再生成（部分リセット禁止）
-        candidate.ev = 0;
-        candidate.m2 = 0;
-        candidate.trialCount = 0;
-        candidate.wins = 0;
-        candidate.totalWinPoints = 0;
-        candidate.tenpaiCount = 0;
-        candidate.totalAgariTurnSum = 0;
-        candidate.agariCount = 0;
-        candidate.stdError = Infinity;
-        candidate.evMean = 0;
-        candidate.winRate = 0;
-        candidate.avgScore = 0;
-        candidate.tenpaiRate = 0;
-        candidate.lcb = 0;
-        candidate.initialRemainingTiles = 0;
-
-        // ★ AFTER RESET 診断ログ（全フィールドが 0 になっているか確認）
-        if (DEBUG_LOG) {
-            const _tileStr = (candidate.action as any).tile !== undefined
-                ? tileToString((candidate.action as any).tile) + ((candidate.action as any).riichi ? "(riichi)" : "")
-                : candidate.action.type;
-            console.log("PHASE2_STATS_AFTER_RESET", {
-                tile: _tileStr,
-                trialCount: candidate.trialCount,
-                wins: candidate.wins,
-                scoreSum: candidate.totalWinPoints,
-                evMean: candidate.evMean
-            });
-        }
-
-        for (let t = 0; t < FINAL_TRIALS; t++) {
-            // 候補ごとに**独立した**乱数シードで山を生成（CRN 無効・山共有なし）
-            const indepSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
-            generateMountainWithSeed(phase2Wall, indepSeed);
-
-            // コピーして mutate 防止
-            for (let j = 0; j < templateLen; j++) phase2Buffer[j] = phase2Wall[j];
-
-            const pathResult = runSingleTrialForAction(candidate, phase2Buffer);
-            candidate.totalAgariTurnSum += pathResult.totalAgariTurnSum;
-            candidate.agariCount += pathResult.agariCount;
-            totalExecutions++;
-        }
-
-        // Phase2 最終統計を明示的に同期（runSingleTrialForAction が updateStats を呼ぶが念押し）
-        candidate.evMean = candidate.ev;
-        candidate.winRate = candidate.trialCount > 0 ? candidate.wins / candidate.trialCount : 0;
-        candidate.avgScore = candidate.wins > 0 ? candidate.totalWinPoints / candidate.wins : 0;
-        candidate.tenpaiRate = candidate.trialCount > 0 ? candidate.tenpaiCount / candidate.trialCount : 0;
-        if (candidate.trialCount > 1) {
-            const variance = Math.max(1e-9, candidate.m2 / (candidate.trialCount - 1));
-            candidate.stdError = Math.sqrt(variance / candidate.trialCount);
-        }
-
-        // averageAgariTurn を再計算
-        if (candidate.agariCount > 0) {
-            candidate.averageAgariTurn = candidate.totalAgariTurnSum / candidate.agariCount;
-            candidate.averageAgariAfterTurns = Math.max(0, candidate.averageAgariTurn - currentTurn);
-        } else {
-            candidate.averageAgariTurn = null;
-            candidate.averageAgariAfterTurns = null;
-        }
-
-        if (DEBUG_LOG) {
-            const tileStr = (candidate.action as any).tile !== undefined
-                ? tileToString((candidate.action as any).tile) : candidate.action.type;
-            const rStr = (candidate.action as any).riichi ? "(riichi)" : "";
-            console.log(`P2_EVAL ${tileStr}${rStr} ev=${candidate.ev.toFixed(1)} n=${candidate.trialCount} wr=${(candidate.winRate * 100).toFixed(1)}%`);
-
-            // ★ P2_SANITY_CHECK ログ
-            console.log("P2_SANITY_CHECK", {
-                tile: `${tileStr}${rStr}`,
-                trialCount: candidate.trialCount,
-                wins: candidate.wins,
-                avgScore: candidate.avgScore.toFixed(1),
-                evMean: candidate.evMean.toFixed(1),
-                stdError: candidate.stdError.toFixed(2),
-                fullEvalCount: Engine.fullEvalCount
-            });
-        }
-    }
-
-    if (DEBUG_LOG) console.log("CRN_PHASE2_END");
-
-    // Phase2 候補を allCandidates へ反映（非final候補の ev は Phase1 のまま）
-    // → Phase2 候補が上位になるよう ev が再設定されているので sort で自然に最上位へ
-
-
-    // Result Determination: Calculate final bounds
-    const finalZ = getZ(activeCandidates.length);
-    for (const c of allCandidates) {
-        c.lcb = c.ev - finalZ * c.stdError;
-        c.confidence95 = finalZ * c.stdError; // Final CI delta for UI
-        c.ciLower = c.ev - finalZ * c.stdError;
-        c.ciUpper = c.ev + finalZ * c.stdError;
-    }
-
-    const finalSorted = [...allCandidates].sort((a, b) => {
-        if (stopReason === "HARD_LIMIT") return (b.lcb ?? -999999) - (a.lcb ?? -999999);
-        return b.ev - a.ev;
     });
 
-    const winner = finalSorted[0];
-    const runnerUp = finalSorted[1];
-
     if (DEBUG_LOG) {
-        console.log(`=== UNIFIED SE END: ${stopReason} ===`);
-        console.log(`State: ${isTenpai ? 'Tenpai' : 'Ishanten'}`);
-        console.log(`Best: ${winner.ev.toFixed(1)} (LCB: ${(winner.lcb ?? 0).toFixed(1)}, n=${winner.trialCount})`);
-        if (runnerUp) console.log(`Second: ${runnerUp.ev.toFixed(1)} (LCB: ${(runnerUp.lcb ?? 0).toFixed(1)}, n=${runnerUp.trialCount})`);
+        console.log(`=== UCB1 END: ${stopReason} ===`);
+        console.log(`Total Trials: ${totalTrials}/${TOTAL_TRIALS}`);
+        console.log(
+            "UCB nodes",
+            allNodes.map(n => ({
+                tile: (n.action as any).tile,
+                visits: n.visits
+            }))
+        );
+        const winner = allNodes[0];
+        const runnerUp = allNodes[1];
+        console.log(`Best: ${winner.meanEV.toFixed(1)} (n=${winner.visits})`);
+        if (runnerUp) console.log(`Second: ${runnerUp.meanEV.toFixed(1)} (n=${runnerUp.visits})`);
     }
 
     const endTime = performance.now();
-    const summary = createSummary(config, winner.initialRemainingTiles, endTime - startTime);
+    const summary = createSummary(config, initialRemainingTiles, endTime - startTime);
 
     // ===============================
     // Finalize average agari turn
     // ===============================
-    for (const c of allCandidates) {
-        if (c.agariCount > 0) {
-            c.averageAgariTurn = c.totalAgariTurnSum / c.agariCount;
-            c.averageAgariAfterTurns = Math.max(0, c.averageAgariTurn - config.currentTurn);
+    results.forEach(res => {
+        if (res.agariCount > 0) {
+            res.averageAgariTurn = res.totalAgariTurnSum / res.agariCount;
+            res.averageAgariAfterTurns = Math.max(0, res.averageAgariTurn - config.currentTurn);
         } else {
-            c.averageAgariTurn = null;
-            c.averageAgariAfterTurns = null;
+            res.averageAgariTurn = null;
+            res.averageAgariAfterTurns = null;
         }
-    }
+    });
 
     if (DEBUG_LOG) {
         console.log("FINAL_AVG_DEBUG",
-            allCandidates.map(c => ({
+            results.map(c => ({
                 tile: (c.action as any).tile ? tileToString((c.action as any).tile) : c.action.type,
                 agariCount: c.agariCount,
                 avgTurn: c.averageAgariTurn,
@@ -758,53 +396,22 @@ export function runBatchSimulations(config: SimulationConfig) {
         );
     }
 
-    const processedResults = allCandidates.map((r: any) => {
+    // Phase 74/81: 結果をキャッシュに保存
+    results.forEach((r: any) => {
         const handAfter = r.action.type === 'discard' ? removeOneTile(myHand, r.action.tile) : myHand;
-        return {
-            ...r,
-            effectiveTiles: calculateEffectiveTiles(handAfter, fixedMentsu.length, visible, myKita, otherKita),
-            evMean: r.ev,
-            confidence95: r.confidence95,
-            agariCount: r.wins,
-            agariRate: r.trialCount > 0 ? (r.wins / r.trialCount) : 0,
-            // ★ avgScore を明示的に再計算（スプレッドに依存せず Phase2 stats を保証）
-            avgScore: r.wins > 0 ? r.totalWinPoints / r.wins : 0,
-            averageAgariAfterTurns: r.averageAgariAfterTurns
-        };
+        const cacheKey = Engine.buildStateKey(
+            handAfter,
+            config.currentTurn || 0,
+            fixedMentsu.length,
+            myKita,
+            otherKita
+        );
+        Engine.saveStateCache(cacheKey, r.evMean);
     });
 
-    if (DEBUG_LOG) {
-        console.log("WORKER_RESULT_SAMPLE", processedResults[0]);
-        // Phase71: totalExecutions に対する scoreWinningHandFast 呼び出し回数
-        console.log("FULL_EVAL_COUNT", Engine.fullEvalCount, "/", totalExecutions, "trials →", ((Engine.fullEvalCount / Math.max(1, totalExecutions)) * 100).toFixed(2) + "%");
-    }
-    self.postMessage({ type: 'RESULT', results: processedResults, summary });
+    self.postMessage({ type: 'RESULT', results, summary });
+    logPerformanceStats(); // Phase 75: 計測結果を出力
     clearShantenCache();
-}
-
-function calculateEffectiveTiles(hand: Tile[], fixedMentsuCount: number, visible: Tile[], myKita: number, otherKita: number): { tile: Tile; count: number }[] {
-    const currentShanten = calculateShanten(hand, fixedMentsuCount);
-    const results: { tile: Tile; count: number }[] = [];
-    const remaining = new Array(34).fill(4);
-    for (let i = 1; i <= 7; i++) remaining[i] = 0;
-    for (const t of visible) {
-        const n = toNormalFive(t);
-        if (n >= 0 && n < 34) remaining[n]--;
-    }
-    remaining[30] -= (myKita + otherKita);
-    if (currentShanten === 0) {
-        for (const t of getWinningTiles(hand, fixedMentsuCount)) {
-            const c = Math.max(0, remaining[toNormalFive(t)]);
-            if (c > 0) results.push({ tile: t, count: c });
-        }
-    } else {
-        for (let t = 0; t < 34; t++) {
-            if (remaining[t] > 0 && calculateShanten([...hand, t as Tile], fixedMentsuCount) < currentShanten) {
-                results.push({ tile: t as Tile, count: remaining[t] });
-            }
-        }
-    }
-    return results.sort((a, b) => a.tile - b.tile);
 }
 
 /**
@@ -812,6 +419,7 @@ function calculateEffectiveTiles(hand: Tile[], fixedMentsuCount: number, visible
  * If 13 tiles, adds a dummy tile (that doesn't improve shanten) to make it 14.
  */
 function normalizeTo14Tiles(hand: Tile[]): Tile[] {
+
     if (hand.length % 3 === 2) return hand; // Already 14, 11, 8, or 5 tiles (after draw/calling)
     // If 13, 10, 7, 4 tiles (before draw), we need to check if we CAN be tenpai.
     // In Riichi context, we check if adding ANY tile makes it agari or tenpai.

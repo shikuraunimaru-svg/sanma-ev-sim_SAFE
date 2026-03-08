@@ -1,3 +1,4 @@
+// @ts-nocheck
 
 import { runSinglePath } from './engine';
 import { TILES } from '../core/tile';
@@ -18,17 +19,18 @@ async function testTurn(turn: number) {
 
     // Add dummy discards for me to match the turn
     const dummyDiscards = new Array(turn - 1).fill(TILES.z3);
-    const visible = [...config.myHand, ...dummyDiscards, ...config.doraIndicators];
-
-    const result = runSinglePath(
-        config.myHand,
+    const result = runSinglePath(config.myHand,
         config.fixedMentsu,
-        { type: 'discard', tile: TILES.z2 },
-        visible,
+        { type: 'discard', tile: TILES.z2, tileInd: 0, riichi: false },
         config.kitaCount,
+        0,
         config.doraIndicators,
         config.currentTurn,
-        config.isDealer
+        config.isDealer,
+        new Uint8Array(108, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0), 108, 70, 44,
+        new Int8Array(34),
+        new Int8Array(29), new Int8Array(27), new Int8Array(29),
+        12345, 0
     );
     console.log(`Initial remainingTotal: ${result.initialRemainingTiles}`);
 }

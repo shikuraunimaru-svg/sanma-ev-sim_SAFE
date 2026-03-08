@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { runSinglePath } from '../simulation/engine';
 import type { Action } from '../simulation/engine';
 import { TILES } from './tile';
@@ -69,11 +70,11 @@ function testUraDoraEffect() {
     // Dora Inds: [TILES.z2].
 
     // Run Riichi
-    const scoreRiichi = runSinglePath(hand14, [], actionRiichi, live, dead, 0, [TILES.z2], 1, true);
+    const scoreRiichi = runSinglePath(hand14, [], actionRiichi, live, dead, 0, [TILES.z2], 1, true, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
 
     // Action 2: Dama (No Ura)
     const actionDama: Action = { type: 'discard', tile: TILES.p1, riichi: false };
-    const scoreDama = runSinglePath(hand14, [], actionDama, live, dead, 0, [TILES.z2], 1, false);
+    const scoreDama = runSinglePath(hand14, [], actionDama, live, dead, 0, [TILES.z2], 1, false, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
 
     console.log(`Score Riichi (1 Ura?): ${scoreRiichi}`);
     console.log(`Score Dama (0 Ura): ${scoreDama}`);

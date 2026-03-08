@@ -11,6 +11,11 @@ function removeOneTile(hand: any[], tile: any): any[] {
     return copy;
 }
 
+function getTileName(t: number): string | number {
+    const name = Object.keys(TILES).find(key => (TILES as any)[key] === t);
+    return name || t;
+}
+
 const hand = [
     TILES.m1, TILES.m1,
     TILES.p2, TILES.p2,
@@ -19,7 +24,7 @@ const hand = [
     TILES.s5, TILES.s6, TILES.s6, TILES.s7, TILES.s8, TILES.s8
 ];
 
-console.log("Full initial hand (14 tiles):", hand.map(t => TILES[t] || t));
+console.log("Full initial hand (14 tiles):", hand.map(getTileName));
 
 const before = calculateShanten(hand, 0);
 console.log("Before shanten (14 tiles):", before);
@@ -28,10 +33,10 @@ console.log("Before shanten (14 tiles):", before);
 const handAfter8s = removeOneTile(hand, TILES.s8);
 const after8s = calculateShanten(handAfter8s, 0);
 console.log("After shanten for 8s discard:", after8s);
-console.log("Hand after discard 8s:", handAfter8s.map(t => TILES[t] || t));
+console.log("Hand after discard 8s:", handAfter8s.map(getTileName));
 
 // Discard 6s
 const handAfter6s = removeOneTile(hand, TILES.s6);
 const after6s = calculateShanten(handAfter6s, 0);
 console.log("After shanten for 6s discard:", after6s);
-console.log("Hand after discard 6s:", handAfter6s.map(t => TILES[t] || t));
+console.log("Hand after discard 6s:", handAfter6s.map(getTileName));

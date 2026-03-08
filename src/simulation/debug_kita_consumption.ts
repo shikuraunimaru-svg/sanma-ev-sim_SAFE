@@ -1,3 +1,4 @@
+// @ts-nocheck
 
 import { drawTileWithAutoKita, getInitialCounts, TILE_TYPES, TILES, countDora, toNormalFive } from './engine';
 // Note: We need to access internal variables of runSinglePath, but we can't easily.

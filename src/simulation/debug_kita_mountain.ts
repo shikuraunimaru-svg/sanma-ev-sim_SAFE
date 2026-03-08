@@ -11,20 +11,21 @@ const hand = [
     TILES.p9
 ];
 
-const visible = [...hand, TILES.p8]; // 15 tiles visible
-
 function testKitaCombination(myKita: number, otherKita: number) {
     console.log(`\n--- Test: myKita=${myKita}, otherKita=${otherKita} ---`);
     const result = runSinglePath(
         hand,
         [],
-        { type: 'discard', tile: TILES.p9 },
-        visible,
+        { type: 'discard', tile: TILES.p9, tileInd: 0, riichi: false },
         myKita,
         otherKita,
         [TILES.p8],
         1,
-        true
+        true,
+        new Uint8Array(108), 108, 70, 44,
+        new Int8Array(34),
+        new Int8Array(29), new Int8Array(27), new Int8Array(29),
+        12345, 0
     );
     console.log(`Initial Remaining Tiles: ${result.initialRemainingTiles}`);
 }
@@ -38,13 +39,16 @@ console.log(`\n--- Test: Dora=NORTH, myKita=2, otherKita=1 ---`);
 const resultDoraNorth = runSinglePath(
     hand,
     [],
-    { type: 'discard', tile: TILES.p9 },
-    [...hand, TILES.z4], // North as Dora indicator
+    { type: 'discard', tile: TILES.p9, tileInd: 0, riichi: false },
     2,
     1,
     [TILES.z4],
     1,
-    true
+    true,
+    new Uint8Array(108), 108, 70, 44,
+    new Int8Array(34),
+    new Int8Array(29), new Int8Array(27), new Int8Array(29),
+    12345, 0
 );
 console.log(`Initial Remaining Tiles: ${resultDoraNorth.initialRemainingTiles}`);
 // 94 - 39 - 1 (dora) - 3 (kita) = 51

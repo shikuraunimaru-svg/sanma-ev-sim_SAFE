@@ -36,7 +36,7 @@ export default function App() {
     bestStructure: any; // Using any briefly to avoid complex type import for now
     allPatterns: { yaku: YakuResult; score: ScoreResult; structure: any }[];
   } | null>(null);
-  const [isAgariMode, setIsAgariMode] = useState(false);
+
 
   const workerRef = useRef<Worker | null>(null);
 
@@ -134,7 +134,7 @@ export default function App() {
     setResults([]);
     setWinResult(null);
     setCsvReport(undefined);
-    setIsAgariMode(false);
+    setCsvReport(undefined);
 
     // Calculate selfEffectiveWallCount for config
     const myKanCount = fixedMentsu.filter(m => m.isKan || m.type === 'kantsu').length;
@@ -179,7 +179,7 @@ export default function App() {
         setWinResult(winData);
         const playable = getPlayableWallCount(config);
         setSimulationSummary(createSummary(config, playable));
-        setIsAgariMode(true);
+
         setIsSimulating(false);
         return;
       }

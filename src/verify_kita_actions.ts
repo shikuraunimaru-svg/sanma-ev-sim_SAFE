@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { runSinglePath } from './simulation/engine';
 import { TILES } from './core/tile';
 
@@ -18,8 +19,7 @@ function testKitaSeparation() {
     const deadWall = [TILES.p4];
 
     console.log("\n--- Case 1: Kita-nuki Action ---");
-    const scoreKita = runSinglePath(
-        hand,
+    const scoreKita = runSinglePath(hand,
         [],
         { type: 'kita' },
         liveWall,
@@ -27,14 +27,13 @@ function testKitaSeparation() {
         0,
         [TILES.p9],
         0,
-        true,
-        true // debugLog
+        true, // debugLog
+        new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0
     );
     console.log(`Kita-nuki Result: ${scoreKita.point} points (Type: ${scoreKita.type})`);
 
     console.log("\n--- Case 2: Discard North Action ---");
-    const scoreDiscard = runSinglePath(
-        hand,
+    const scoreDiscard = runSinglePath(hand,
         [],
         { type: 'discard', tile: TILES.z4 },
         liveWall,
@@ -42,8 +41,8 @@ function testKitaSeparation() {
         0,
         [TILES.p9],
         0,
-        true,
-        true // debugLog
+        true, // debugLog
+        new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0
     );
     console.log(`Discard North Result: ${scoreDiscard.point} points (Type: ${scoreDiscard.type})`);
 

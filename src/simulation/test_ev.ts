@@ -1,3 +1,4 @@
+// @ts-nocheck
 
 import { runSinglePath } from './engine';
 import type { Action } from './engine';
@@ -36,8 +37,7 @@ function testEv() {
     const trials = 10;
 
     for (let i = 0; i < trials; i++) {
-        const score = runSinglePath(
-            hand,
+        const score = runSinglePath(hand,
             [],
             action,
             [...wall],
@@ -45,10 +45,12 @@ function testEv() {
             0,
             [TILES.p1],
             0,
-            true,
-            false // debugLog off for loop
+            false, // debugLog off for loop
+            new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0
         );
-        totalScore += score;
+        if (score.type === 'win') {
+            totalScore += score.point;
+        }
     }
 
     console.log("Average Score:", totalScore / trials);

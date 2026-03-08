@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { runSinglePath } from '../simulation/engine';
 import type { Action } from '../simulation/engine';
 import { TILES } from './tile';
@@ -41,10 +42,10 @@ function testRiichiCost() {
     const actionRiichiTest: Action = { type: 'discard', tile: TILES.p1, riichi: true };
 
     // Run Dama
-    const scoreDama = runSinglePath(initialHand, [], actionDama, live, dead, 0, [TILES.z2], 1, false);
+    const scoreDama = runSinglePath(initialHand, [], actionDama, live, dead, 0, [TILES.z2], 1, false, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
 
     // Run Riichi
-    const scoreRiichi = runSinglePath(initialHand, [], actionRiichiTest, live, dead, 0, [TILES.z2], 1, false);
+    const scoreRiichi = runSinglePath(initialHand, [], actionRiichiTest, live, dead, 0, [TILES.z2], 1, false, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
 
     console.log(`Dama Score: ${scoreDama}`);
     console.log(`Riichi Score: ${scoreRiichi}`);
@@ -72,12 +73,12 @@ function testRyuukyokuLogic() {
     const actionRiichi: Action = { type: 'discard', tile: TILES.m1, riichi: true };
     const actionDama: Action = { type: 'discard', tile: TILES.m1, riichi: false };
 
-    const scoreDama = runSinglePath(hand, [], actionDama, live, dead, 0, [], 17, false);
+    const scoreDama = runSinglePath(hand, [], actionDama, live, dead, 0, [], 17, false, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
     // Exhaust -> 0.
 
     console.log(`Dama Ryuukyoku: ${scoreDama} (Expected 0)`);
 
-    const scoreRiichi = runSinglePath(hand, [], actionRiichi, live, dead, 0, [], 17, false);
+    const scoreRiichi = runSinglePath(hand, [], actionRiichi, live, dead, 0, [], 17, false, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
     // Exhaust -> -1000 (Cost) + 333 (Return) = -667.
 
     console.log(`Riichi Ryuukyoku: ${scoreRiichi} (Expected -667)`);

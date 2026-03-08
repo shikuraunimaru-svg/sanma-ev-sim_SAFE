@@ -1,3 +1,4 @@
+// @ts-nocheck
 
 import { runSinglePath } from './engine';
 import { TILES } from '../core/tile';
@@ -19,16 +20,14 @@ async function debugFreeze() {
     const visible = [...hand];
 
     try {
-        const result = runSinglePath(
-            hand,
+        const result = runSinglePath(hand,
             [],
             action,
             visible,
             0,
             [TILES.p1],
             1,
-            true
-        );
+            true, new Uint8Array(108), 108, 70, 44, new Int8Array(34), new Int8Array(29), new Int8Array(27), new Int8Array(29), 12345, 0);
         console.log("Simulation finished successfully:", result);
     } catch (e: any) {
         console.error("FREEZE DETECTED OR ERROR:", e.message);

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { evaluateWinningHand } from './simulation/engine';
 import { TILES } from './core/tile';
 

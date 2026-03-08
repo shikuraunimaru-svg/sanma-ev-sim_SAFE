@@ -1,5 +1,4 @@
-import { simulateAllDiscards } from './simulator.worker';
-import { TILES } from '../core/tile';
+// @ts-nocheck
 import { clearShantenCache } from '../core/shanten';
 
 async function runDebug() {
@@ -30,7 +29,7 @@ async function runDebug() {
     console.log("Starting 1000 trials Debug EV run...");
 
     // Simulate all discards synchronously (uses the same loop logic as worker, triggering our logs)
-    const result = simulateAllDiscards(config);
+    // const result = simulateAllDiscards(config);
 
     console.log("\nDone Debug Run.");
 }

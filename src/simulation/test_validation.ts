@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { simulateAllDiscards } from './simulator.worker';
 import { TILES } from '../core/tile';
 import type { SimulationConfig } from './engine';

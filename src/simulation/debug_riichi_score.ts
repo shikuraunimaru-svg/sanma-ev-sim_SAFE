@@ -11,8 +11,6 @@ const hand = [
     TILES.p9 // 9p is Dora in hand (indicator is 8p)
 ];
 
-const visible = [...hand, TILES.p8]; // 8p as dora indicator (makes 9p dora)
-
 const config = {
     myHand: hand,
     fixedMentsu: [],
@@ -31,12 +29,16 @@ function testAction(action: any, label: string) {
         const result = runSinglePath(
             config.myHand,
             config.fixedMentsu,
-            action,
-            visible,
+            { ...action, tileInd: 0 },
             config.kitaCount,
+            0,
             config.doraIndicators,
             config.currentTurn,
-            config.isDealer
+            config.isDealer,
+            new Uint8Array(108), 108, 70, 44,
+            new Int8Array(34),
+            new Int8Array(29), new Int8Array(27), new Int8Array(29),
+            12345, 0
         );
 
         if (result.type === 'win') {
