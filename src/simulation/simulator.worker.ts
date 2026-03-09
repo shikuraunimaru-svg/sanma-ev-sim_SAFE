@@ -262,20 +262,21 @@ export function runBatchSimulations(config: SimulationConfig) {
 
         const node = selectedNode ?? selectUCBNode(activeNodes);
 
-        // WallPool からランダムな山を取得
-        const randomWallIdx = Math.floor(Math.random() * wallPool.length);
-        const wall = wallPool[randomWallIdx];
+        // CRN (Common Random Numbers) 導入: 
+        // 試行回数(visits)に応じて使用する山とシードを固定し、候補間の分散を抑える
+        const crnIndex = node.visits % wallPool.length;
+        const wall = wallPool[crnIndex];
 
         const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
 
-        // Seed は totalTrials と actionIndex などから適当に決めるか、engine のシード生成に任せる
-        const seed = totalTrials >>> 0;
+        // シードも visits に固定し、他の打牌候補の同じ visits 目と完全に条件を一致させる
+        const seed = node.visits >>> 0;
 
         const result = runSinglePath(
             afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
             currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
             templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, 0
+            seed, initialShanten, 0
         );
 
         if (totalTrials === 0) {
@@ -368,6 +369,67 @@ export function runBatchSimulations(config: SimulationConfig) {
 
     const endTime = performance.now();
     const summary = createSummary(config, initialRemainingTiles, endTime - startTime);
+
+    // ========== Final Re-evaluation ==========
+    results.sort((a, b) => b.evMean - a.evMean);
+    const FINAL_REEVAL_TRIALS = 2000;
+    const finalists = results.slice(0, 2);
+
+    if (DEBUG_LOG) {
+        console.log("Final Re-evaluation start");
+    }
+
+    // CRNの基点: 上位2候補が全く同じ山リスト・シード条件で戦うように固定値をとる
+    const finalReevalBaseIndex = totalTrials;
+
+    for (const node of finalists) {
+        if (DEBUG_LOG) {
+            const tileStr = node.action.type === 'discard' ? tileToString((node.action as any).tile) : node.action.type;
+            console.log(`Candidate ${tileStr} +${FINAL_REEVAL_TRIALS} trials`);
+        }
+
+        const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+
+        // Recover totals to continue adding
+        let totalEV = node.evMean * node.trialCount;
+        let totalWinCount = Math.round(node.winRate * node.trialCount);
+        let totalTenpaiCount = Math.round(node.tenpaiRate * node.trialCount);
+        let totalAvgScoreSum = node.avgScore * totalWinCount;
+
+        for (let i = 0; i < FINAL_REEVAL_TRIALS; i++) {
+            // CRN: finalists 同士で完全に同じ山とシードを順番に使用する
+            const crnIndex = (finalReevalBaseIndex + i) % wallPool.length;
+            const wall = wallPool[crnIndex];
+            const seed = (finalReevalBaseIndex + i) >>> 0;
+
+            const simResult = runSinglePath(
+                afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+                currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed, 0
+            );
+
+            totalEV += simResult.point;
+            node.trialCount += 1;
+
+            if (simResult.finalShanten === -1) {
+                totalWinCount++;
+                totalTenpaiCount++;
+                totalAvgScoreSum += simResult.point;
+            } else if (simResult.finalShanten === 0) {
+                totalTenpaiCount++;
+            }
+        }
+
+        totalTrials += FINAL_REEVAL_TRIALS;
+        node.evMean = totalEV / node.trialCount;
+        node.ev = node.evMean; // Keep 'ev' and 'evMean' in sync
+        node.winRate = totalWinCount / node.trialCount;
+        node.tenpaiRate = totalTenpaiCount / node.trialCount;
+        node.avgScore = totalWinCount > 0 ? totalAvgScoreSum / totalWinCount : 0;
+    }
+
+    results.sort((a, b) => b.evMean - a.evMean);
 
     // ===============================
     // Finalize average agari turn
