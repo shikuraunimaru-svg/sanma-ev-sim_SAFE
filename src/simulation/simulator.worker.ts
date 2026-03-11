@@ -10,7 +10,7 @@ import type { Tile } from '../core/tile';
 import { calculateShanten as calculateShantenCore } from '../core/shanten';
 
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, initWallPool, selectUCBNode, pruneWeakNodes, earlyStop } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, initWallPool, selectUCBNode, pruneWeakNodes, earlyStop, DEBUG_LOGS } = Engine;
 type UCBNode = Engine.UCBNode;
 // fullEvalCount は Engine モジュール変数として直接参照 (Engine.fullEvalCount)
 
@@ -163,6 +163,28 @@ export function runBatchSimulations(config: SimulationConfig) {
     const drawsConsumed = Math.max(0, (currentTurn - 1) * 3);
     const { templateMountain, templateCounts } = buildWallTemplate(visible, drawsConsumed);
 
+    const debugWallCounts = (wall: Uint8Array) => {
+        if (!DEBUG_LOGS.wallCounts) return;
+        const counts = new Array(34).fill(0);
+        for (let i = 0; i < wall.length; i++) {
+            counts[wall[i]]++;
+        }
+        console.log("DEBUG_WALL_COUNTS", counts);
+    };
+    debugWallCounts(templateMountain);
+
+    const debugUniqueTiles = (wall: Uint8Array) => {
+        if (!DEBUG_LOGS.wallCounts) return;
+        const counts: Record<string, number> = {};
+        for (let i = 0; i < wall.length; i++) {
+            const tile = TILE_TYPES[wall[i]];
+            const s = tileToString(tile);
+            counts[s] = (counts[s] || 0) + 1;
+        }
+        console.log("DEBUG_WALL_UNIQUE", counts);
+    };
+    debugUniqueTiles(templateMountain);
+
     // Phase 76: Wall Pool の初期化と保証
     // ターンの進行により templateMountain の内容（可視牌など）が変わるため、
     // プールが空の場合だけでなく毎ターン更新するのが安全です。
@@ -276,7 +298,7 @@ export function runBatchSimulations(config: SimulationConfig) {
             afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
             currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
             templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, initialShanten, 0
+            seed, initialShanten, 0, totalTrials
         );
 
         if (totalTrials === 0) {
@@ -406,7 +428,7 @@ export function runBatchSimulations(config: SimulationConfig) {
                 afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
                 currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
                 templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-                seed, 0
+                seed, 0, 0, 9999
             );
 
             totalEV += simResult.point;

@@ -1,4 +1,4 @@
-import { TILES, toNormalFive, isRedFive } from '../core/tile';
+import { TILES, toNormalFive, isRedFive, tileToString } from '../core/tile';
 export { TILES };
 import type { Tile } from '../core/tile';
 import { calculateShanten27, getAgariPatterns, getShantenBreakdown27 } from '../core/shanten';
@@ -10,10 +10,27 @@ import type { GameState, YakuResult } from '../core/yaku';
 import { calculatePoints } from '../core/score';
 import type { ScoreResult } from '../core/score';
 
-/**
- * DEBUG_LOG: パフォーマンス維持のため、シミュレーション中の詳細ログを抑制する。
- */
 const DEBUG_LOG = false;
+
+export const ENABLE_STATE_CACHE = false;
+
+export const DEBUG_LOGS = {
+    drawTile: false,
+    ukeire: false,
+    wallCounts: false
+};
+
+// =========================================================
+// Evaluation Constants
+// =========================================================
+const SHANTEN_SCORE_TABLE = [
+    140, // 0シャンテン (テンパイ)
+    50,  // 1シャンテン
+    22,  // 2シャンテン
+    10,  // 3シャンテン
+    6    // 4シャンテン以上
+];
+const SHANTEN_MULTIPLIER = [2.7, 1.8, 1.3, 1.0, 1.0];
 
 /**
  * Tile Count System (29 Types)
@@ -591,25 +608,41 @@ export function simpleHashHand(hand: Tile[]): number {
  * 制限数を超えた場合はクリアする。
  */
 export function saveStateCache(key: string, ev: number) {
-    if (stateCache.size >= STATE_CACHE_LIMIT) {
-        stateCache.clear();
+    if (ENABLE_STATE_CACHE) {
+        if (stateCache.size >= STATE_CACHE_LIMIT) {
+            stateCache.clear();
+        }
+        stateCache.set(key, ev);
     }
-    stateCache.set(key, ev);
 }
 
 export function logPerformanceStats() {
     const totalCache = cacheHits + cacheMisses;
     const hitRate = totalCache > 0 ? ((cacheHits / totalCache) * 100).toFixed(1) : "0.0";
 
+    console.log("---- Simulation End Reasons ----");
+    console.log("win:", DEBUG_SIM_STATS.win);
+    console.log("ryukyoku:", DEBUG_SIM_STATS.ryukyoku);
+    console.log("tenpaiStop:", DEBUG_SIM_STATS.tenpaiStop);
+    console.log("wallExhaust:", DEBUG_SIM_STATS.wallExhaust);
+    console.log("--------------------------------");
+
     console.log("--- Performance Stats ---");
-    console.log(`stateCache size: ${stateCache.size}`);
-    console.log(`cacheHits: ${cacheHits}`);
-    console.log(`cacheMisses: ${cacheMisses}`);
-    console.log(`cacheHitRate: ${hitRate} %`);
-    console.log("");
+    if (ENABLE_STATE_CACHE) {
+        console.log(`stateCache size: ${stateCache.size}`);
+        console.log(`cacheHits: ${cacheHits}`);
+        console.log(`cacheMisses: ${cacheMisses}`);
+        console.log(`cacheHitRate: ${hitRate} %`);
+        console.log("");
+    }
+    const totalShantenCache = shantenCacheHits + shantenCacheMisses;
+    const shantenHitRate = totalShantenCache > 0 ? ((shantenCacheHits / totalShantenCache) * 100).toFixed(1) : "0.0";
+
     console.log(`shantenCache size: ${shantenCache.size}`);
     console.log(`shantenCacheHits: ${shantenCacheHits}`);
     console.log(`shantenCacheMisses: ${shantenCacheMisses}`);
+    console.log(`shantenCacheHitRate: ${shantenHitRate} %`);
+    console.log(`calculateShanten calls: ${shantenCalls}`);
     const shantenTotal = shantenCacheHits + shantenCacheMisses;
     const shantenRate = shantenTotal > 0 ? (shantenCacheHits / shantenTotal) * 100 : 0;
     console.log(`shantenCacheHitRate: ${shantenRate.toFixed(1)} %`);
@@ -787,6 +820,156 @@ export function getWinningTiles(hand: Tile[], fixedMentsuCount: number): Tile[] 
     return wins27.map(s => toStandardTile(s) as Tile);
 }
 
+// =========================================================
+// Phase 2: Effective Ukeire Weighting (Progress Evaluation)
+// =========================================================
+export function evaluateShapeProgress(beforeHand: Int8Array | number[], drawT27: number, doraSet: Set<number>, isRed: boolean): number {
+    const c = beforeHand[drawT27];
+    const normTile = toStandardTile(drawT27);
+    const type = Math.floor(normTile / 9); // 0=m, 1=p, 2=s, 3=z
+    const num = (type < 3) ? (normTile % 9) + 1 : 0;
+
+    let w = 0;
+
+    const B = (delta: number) => {
+        if (type === 3) return 0;
+        const n = num + delta;
+        if (type === 0 && (n < 1 || n > 9)) return 0;
+        if (n < 1 || n > 9) return 0;
+        const target = toSanmaTile(normTile + delta);
+        if (target === -1) return 0;
+        return beforeHand[target];
+    };
+
+    if (c === 0) {
+        if (type < 3) {
+            const left1 = B(-1), left2 = B(-2), left3 = B(-3);
+            const right1 = B(1), right2 = B(2), right3 = B(3);
+
+            if (left1 > 0 && left2 > 0) {
+                if (left3 > 0) {
+                    if (num === 4 || num === 9) w = Math.max(w, 2);
+                    else if (num === 5 || num === 8) w = Math.max(w, 3);
+                    else w = Math.max(w, 4);
+                } else {
+                    w = Math.max(w, 8);
+                }
+            }
+            if (right1 > 0 && right2 > 0) {
+                if (right3 > 0) {
+                    if (num === 1 || num === 6) w = Math.max(w, 2);
+                    else if (num === 2 || num === 5) w = Math.max(w, 3);
+                    else w = Math.max(w, 4);
+                } else {
+                    w = Math.max(w, 8);
+                }
+            }
+            if (left1 > 0 && right1 > 0) {
+                w = Math.max(w, 8);
+            }
+
+            const isPenchanLeft = (num === 3);
+            const isPenchanRight = (num === 7);
+
+            if (left1 === 1) w = Math.max(w, isPenchanLeft ? 2 : 5);
+            if (left1 >= 2) w = Math.max(w, isPenchanLeft ? 3 : 4);
+
+            if (right1 === 1) w = Math.max(w, isPenchanRight ? 2 : 5);
+            if (right1 >= 2) w = Math.max(w, isPenchanRight ? 3 : 4);
+
+            if (left2 === 1) w = Math.max(w, 2);
+            if (left2 >= 2) w = Math.max(w, 3);
+
+            if (right2 === 1) w = Math.max(w, 2);
+            if (right2 >= 2) w = Math.max(w, 3);
+
+            if (left1 > 0 && left3 > 0) w = Math.max(w, 4);
+            if (right1 > 0 && right3 > 0) w = Math.max(w, 4);
+
+            if (num === 4 && left2 > 0 && left3 > 0) w = Math.max(w, 1);
+            if (num === 6 && right2 > 0 && right3 > 0) w = Math.max(w, 1);
+        }
+    } else if (c === 1) {
+        w = Math.max(w, 2);
+
+        const isYakuhai = (type === 3 && (num === 1 || num === 5 || num === 6 || num === 7));
+        const isDoubleEast = (type === 3 && num === 1);
+        const isDora = doraSet.has(drawT27);
+
+        if (isYakuhai) {
+            if (isDora) w = Math.max(w, 8);
+            else if (isDoubleEast) w = Math.max(w, 4);
+            else w = Math.max(w, 2);
+        } else if (isDora && (type === 3 || type === 0)) {
+            w = Math.max(w, 4);
+        } else if (isDora && type < 3) {
+            w = Math.max(w, 4);
+        }
+
+        if (type < 3) {
+            const left1 = B(-1), right1 = B(1);
+            const left2 = B(-2), right2 = B(2);
+
+            const isPenchanLeft = (num === 3);
+            const isPenchanRight = (num === 7);
+
+            if ((left1 > 0 && !isPenchanLeft) || (right1 > 0 && !isPenchanRight)) w = Math.max(w, 2);
+            if ((left1 > 0 && isPenchanLeft) || (right1 > 0 && isPenchanRight) || left2 > 0 || right2 > 0) w = Math.max(w, 3);
+
+            if (left1 > 0 && right1 > 0) {
+                if (num === 2 || num === 8) w = Math.max(w, 0);
+                else w = Math.max(w, 3);
+            }
+
+            if (left1 > 0 && left2 > 0) {
+                if (num === 3 || num === 7) w = Math.max(w, 0);
+                else w = Math.max(w, 1);
+            }
+            if (right1 > 0 && right2 > 0) {
+                if (num === 3 || num === 7) w = Math.max(w, 0);
+                else w = Math.max(w, 1);
+            }
+        }
+    } else if (c === 2) {
+        w = Math.max(w, 8);
+    } else if (c === 3) {
+        w = Math.max(w, 1);
+    }
+
+    if (type < 3) {
+        if (B(-1) >= 3 || B(1) >= 3) w = Math.max(w, 1);
+    }
+
+    let doraBonus = 0;
+    const isDora = doraSet.has(drawT27);
+    if (isRed) {
+        doraBonus += 4;
+    } else if (isDora) {
+        if (type === 3 || type === 0) doraBonus += 1;
+        else if (num >= 3 && num <= 7) doraBonus += 4;
+        else if (num === 2 || num === 8) doraBonus += 3;
+        else if (num === 1 || num === 9) doraBonus += 2;
+    }
+
+    return w + doraBonus;
+}
+
+export const TURN_FACTOR = [
+    1.0, 1.0, 1.0, 1.0, 1.0,
+    0.98,
+    0.95,
+    0.90,
+    0.82,
+    0.72,
+    0.62,
+    0.53,
+    0.45,
+    0.38,
+    0.32,
+    0.27,
+    0.23
+];
+
 /**
  * Pure function to find the best discard from a 27-count hand.
  * Returns the index (0-26) or -1 if no discards possible.
@@ -798,8 +981,18 @@ export function findBestDiscard27(
     doraIndicators: Tile[],
     rng?: SimpleRNG,
     tenpaiDepth: number = 0,
-    _depth: number = 0
+    _depth: number = 0,
+    turn: number = 1,
+    debugTrialIndex: number = 9999
 ): number {
+    const turnFactor = TURN_FACTOR[Math.min(Math.max(0, turn - 1), 16)] || 1.0;
+    const doraSet = new Set<number>();
+    for (const ind of doraIndicators) {
+        const d = getDoraValue(ind);
+        const sIdx = toSanmaTile(d);
+        if (sIdx !== -1) doraSet.add(sIdx);
+    }
+
     // If tenpaiDepth >= 2, we are in a re-tenpai situation where we must not drop shanten back to 1.
     const currentShanten = getShantenMemoized(hand27 as any, fixedMentsuCount);
     const forceMaintainTenpai = (tenpaiDepth >= 2 && currentShanten === 0);
@@ -852,11 +1045,8 @@ export function findBestDiscard27(
                 }
             }
         }
-        return (-s * 100) + shapeScore; // fast evaluation base
+        return SHANTEN_SCORE_TABLE[Math.min(s, 4)] + shapeScore; // non-linear evaluation base
     }
-
-    const MAX_SHAPE_SCORE = 80;
-
     let hasTenpaiCandidate = false;
     let bestEvSoFar = -999999;
 
@@ -878,126 +1068,59 @@ export function findBestDiscard27(
         const baseScore = evaluateHandScore(hand27, s);
         let ev = 0;
 
-        // --- 1-ply EV LOOKAHEAD LOGIC ---
-        // If not already in Tenpai (and no discard gives Tenpai, or we are evaluating it),
-        // we can afford predicting the EV of next draws.
+        // --- Phase 2: Effective Ukeire Weighting ---
         if (s > 0) {
-            // Find Candidate Draw Tiles with Priorities
-            // Priority: 1=Effective, 2=Dora, 3=Red, 4=Neighbor, 5=Other
-            const candidatePriorities = new Int8Array(27).fill(99);
+            if (debugTrialIndex < 3) {
+                let effectiveTiles: Tile[] = [];
+                let seen = new Set<number>();
+                for (let t = 0; t < 29; t++) {
+                    if (invisibleCounts29[t] <= 0) continue;
+                    const tile29 = TILE_TYPES[t];
+                    const drawT27 = toSanmaTile(toNormalFive(tile29));
+                    if (drawT27 === -1) continue;
+                    if (seen.has(drawT27)) continue;
 
-            // 1. Effective Tiles (Shanten improvers)
-            const effArray: number[] = [];
-            for (let t = 0; t < 27; t++) {
-                if (sanmaRemaining[t] <= 0) continue;
-                hand27[t]++;
-                const ns = calculateShantenCached(hand27, fixedMentsuCount);
-                if (ns < s) {
-                    candidatePriorities[t] = 1;
-                    effArray.push(t);
-                }
-                hand27[t]--;
-            }
+                    hand27[drawT27]++;
+                    const nextS = calculateShantenCached(hand27, fixedMentsuCount);
+                    hand27[drawT27]--;
 
-            // 2. Dora
-            for (const ind of doraIndicators) {
-                const normalInd = toNormalFive(ind);
-                let doraVal = normalInd;
-                if (normalInd >= 0 && normalInd <= 8) doraVal = normalInd === 0 ? 8 : (normalInd === 8 ? 0 : normalInd + 1);
-                else if (normalInd >= 9 && normalInd <= 17) doraVal = normalInd === 17 ? 9 : normalInd + 1;
-                else if (normalInd >= 18 && normalInd <= 26) doraVal = normalInd === 26 ? 18 : normalInd + 1;
-                else if (normalInd >= 27 && normalInd <= 30) doraVal = normalInd === 30 ? 27 : normalInd + 1;
-                else if (normalInd >= 31 && normalInd <= 33) doraVal = normalInd === 33 ? 31 : normalInd + 1;
-
-                const sanmaIdx = toSanmaTile(doraVal);
-                if (sanmaIdx !== -1 && candidatePriorities[sanmaIdx] > 2) {
-                    candidatePriorities[sanmaIdx] = 2;
-                }
-            }
-
-            // 3. Red Fives
-            const pin5 = toSanmaTile(TILES.p5);
-            if (pin5 !== -1 && candidatePriorities[pin5] > 3) candidatePriorities[pin5] = 3;
-            const sou5 = toSanmaTile(TILES.s5);
-            if (sou5 !== -1 && candidatePriorities[sou5] > 3) candidatePriorities[sou5] = 3;
-
-            // 4. Neighbors of Effective Tiles (For Shuntsu development)
-            for (const eff of effArray) {
-                const normTile = toStandardTile(eff);
-                const type = Math.floor(normTile / 9); // 0=manzu, 1=pinzu, 2=souzu, 3=zihai
-                if (type < 3) {
-                    // Number tile
-                    const val = normTile % 9;
-                    if (val > 0) {
-                        const sanmaIdx = toSanmaTile(normTile - 1);
-                        if (sanmaIdx !== -1 && candidatePriorities[sanmaIdx] > 4) candidatePriorities[sanmaIdx] = 4;
-                    }
-                    if (val < 8) {
-                        const sanmaIdx = toSanmaTile(normTile + 1);
-                        if (sanmaIdx !== -1 && candidatePriorities[sanmaIdx] > 4) candidatePriorities[sanmaIdx] = 4;
+                    if (nextS < s) {
+                        seen.add(drawT27);
+                        effectiveTiles.push(toNormalFive(tile29));
                     }
                 }
-            }
-
-            // 5. Others (e.g. Kita)
-            const kita = toSanmaTile(TILES.z4);
-            if (kita !== -1 && candidatePriorities[kita] > 5) candidatePriorities[kita] = 5;
-
-            // Collect, sort, and prune to top 8 candidates
-            const collectedCandidates: { tile: number, priority: number }[] = [];
-            for (let t = 0; t < 27; t++) {
-                if (candidatePriorities[t] <= 5 && sanmaRemaining[t] > 0) {
-                    collectedCandidates.push({ tile: t, priority: candidatePriorities[t] });
+                if (DEBUG_LOGS.ukeire && effectiveTiles.length > 0) {
+                    console.log("DEBUG_UKEIRE", {
+                        shanten: s,
+                        ukeireTiles: effectiveTiles.map(tileToString)
+                    });
                 }
             }
-            collectedCandidates.sort((a, b) => a.priority - b.priority);
 
-            const finalDrawCandidates = collectedCandidates.slice(0, 8).map(c => c.tile);
+            let totalProgress = 0;
+            for (let t = 0; t < 29; t++) {
+                const rem = invisibleCounts29[t];
+                if (rem <= 0) continue;
 
-            // Calculate EV delta for pruned finalDrawCandidates
-            let drawEvSum = 0;
-            let totalAvailableDraws = 0;
-            for (const drawT of finalDrawCandidates) {
-                totalAvailableDraws += sanmaRemaining[drawT];
+                const tile29 = TILE_TYPES[t];
+                const drawT27 = toSanmaTile(toNormalFive(tile29));
+                if (drawT27 === -1) continue;
+
+                const isRed = isRedFive(tile29);
+                const progressScore = evaluateShapeProgress(hand27, drawT27, doraSet, isRed);
+                totalProgress += progressScore * rem;
             }
-
-            if (totalAvailableDraws > 0) {
-                let remainingDraws = totalAvailableDraws;
-
-                for (const drawT of finalDrawCandidates) {
-                    const rem = sanmaRemaining[drawT];
-                    if (rem <= 0) continue;
-
-                    // Early EV Cutoff Check
-                    const currentEvSum = drawEvSum / totalAvailableDraws;
-                    // Max possible future delta = (maximum hand score) - baseScore
-                    // Since minimum s=0, maximum shapeScore is roughly 80, we take upper bound
-                    // theoretical max score = 0 * -100 + 80 = 80;
-                    const maxDelta = MAX_SHAPE_SCORE - baseScore;
-                    const maxRemainingEvSum = (maxDelta * remainingDraws) / totalAvailableDraws;
-
-                    if (baseScore + currentEvSum + maxRemainingEvSum < bestEvSoFar) { // Prune!
-                        ev = -999999; // Explicitly mark as worst
-                        break;
-                    }
-
-                    hand27[drawT]++;
-                    const ns = calculateShantenCached(hand27, fixedMentsuCount);
-                    const newScore = evaluateHandScore(hand27, ns);
-                    const delta = newScore - baseScore;
-                    drawEvSum += delta * rem;
-                    hand27[drawT]--;
-
-                    remainingDraws -= rem;
-                }
-
-                if (ev !== -999999) {
-                    ev = drawEvSum / totalAvailableDraws;
-                }
-            }
+            // Apply Multiplier corresponding to current Shanten (s).
+            ev = totalProgress * SHANTEN_MULTIPLIER[Math.min(s, 4)];
         }
 
-        const finalEv = baseScore + ev;
+        let finalEv = 0;
+        if (s === 0) {
+            finalEv = baseScore;
+        } else {
+            finalEv = (baseScore * turnFactor) + (ev * turnFactor);
+        }
+
         if (finalEv > bestEvSoFar && !hasTenpaiCandidate && ev !== -999999) {
             bestEvSoFar = finalEv;
         }
@@ -1005,7 +1128,7 @@ export function findBestDiscard27(
         candidates.push({
             tile: i,
             shanten: s,
-            ukeire: 0, // ukeire logic wrapped in baseScore
+            ukeire: 0, // ukeire logic replaced by Progress Weighting
             score: baseScore,
             ev: finalEv
         });
@@ -1099,6 +1222,13 @@ export function buildStateKey(
     return key;
 }
 
+export const DEBUG_SIM_STATS = {
+    win: 0,
+    ryukyoku: 0,
+    tenpaiStop: 0,
+    wallExhaust: 0
+};
+
 export function runSinglePath(
     initialHand: Tile[],
     localFixedMentsuArr: Mentsu[],
@@ -1118,7 +1248,8 @@ export function runSinglePath(
     workUraCounts: Int8Array,
     seed: number,
     initialShanten: number,
-    tenpaiDepth: number = 0
+    tenpaiDepth: number = 0,
+    debugTrialIndex: number = 9999
 ): SimulationPathResult {
     // Phase 74: Cache Check
     const cacheKey = buildStateKey(
@@ -1128,21 +1259,23 @@ export function runSinglePath(
         myKita,
         otherKita
     );
-    const cachedEV = stateCache.get(cacheKey);
-    if (cachedEV !== undefined) {
-        cacheHits++;
-        return {
-            type: 'win', // キャッシュヒット時は便宜上 'win' 扱い、ポイントに EV を格納
-            point: cachedEV,
-            isTenpai: true,
-            finalShanten: -1,
-            initialRemainingTiles: liveWallLimit,
-            totalAgariTurnSum: 0,
-            agariCount: 0,
-            engineLiveWallLimit: liveWallLimit
-        };
+    if (ENABLE_STATE_CACHE) {
+        const cachedEV = stateCache.get(cacheKey);
+        if (cachedEV !== undefined) {
+            cacheHits++;
+            return {
+                type: 'win', // キャッシュヒット時は便宜上 'win' 扱い、ポイントに EV を格納
+                point: cachedEV,
+                isTenpai: true,
+                finalShanten: -1,
+                initialRemainingTiles: liveWallLimit,
+                totalAgariTurnSum: 0,
+                agariCount: 0,
+                engineLiveWallLimit: liveWallLimit
+            };
+        }
+        cacheMisses++;
     }
-    cacheMisses++;
 
     const rng = new SimpleRNG(seed);
     const initialTotalForSummary = liveWallLimit;
@@ -1211,6 +1344,13 @@ export function runSinglePath(
                     const sRep = toSanmaTile(toNormalFive(rTile));
                     if (sRep !== -1) hand27[sRep]++;
                     if (rTile === TILES.p5r) redP5++; else if (rTile === TILES.s5r) redS5++;
+
+                    if (DEBUG_LOGS.drawTile && debugTrialIndex < 2) {
+                        console.log("DEBUG_KITA_REPLACEMENT", {
+                            replacementTile: tileToString(rTile),
+                            wallLengthAfterReplacement: liveWallLimit - mountainPtr
+                        });
+                    }
                     break;
                 }
             }
@@ -1238,6 +1378,20 @@ export function runSinglePath(
             }
 
             if (!drawn) break;
+
+            if (DEBUG_LOGS.drawTile && debugTrialIndex < 2) {
+                console.log("DEBUG_DRAW_METHOD", {
+                    wallLengthBefore: liveWallLimit - (mountainPtr - 3), // 3 bytes were advanced, so before is +3 tiles remaining effectively per tile index
+                    drawTile: tileToString(drawn)
+                });
+            }
+
+            if (DEBUG_LOGS.drawTile && debugTrialIndex < 2) {
+                console.log("DEBUG_WALL_AFTER_DRAW", {
+                    wallLengthAfter: liveWallLimit - mountainPtr
+                });
+            }
+
             const sDrawn = toSanmaTile(toNormalFive(drawn));
             if (sDrawn !== -1) hand27[sDrawn]++;
             if (drawn === TILES.p5r) redP5++; else if (drawn === TILES.s5r) redS5++;
@@ -1316,7 +1470,7 @@ export function runSinglePath(
                 scoreFastCalls++;
 
                 if (fastPoints > 0) {
-
+                    DEBUG_SIM_STATS.win++;
                     return {
                         type: 'win', point: fastPoints + scoreAdjustment, isTenpai: true,
                         finalShanten: -1,
@@ -1327,7 +1481,7 @@ export function runSinglePath(
             }
 
             // Discard
-            const bestD = findBestDiscard27(hand27, localFixedMentsuArr.length, trialCounts, doraIndicators, rng, tenpaiDepth, depth);
+            const bestD = findBestDiscard27(hand27, localFixedMentsuArr.length, trialCounts, doraIndicators, rng, tenpaiDepth, depth, currentTurn + pathTurnCount, debugTrialIndex);
             if (bestD !== -1) {
                 hand27[bestD]--;
                 depth++;
@@ -1446,6 +1600,13 @@ export function runSinglePath(
 
         const finalShantenVal = calculateShantenCached(hand27, localFixedMentsuArr.length);
         const isTenpaiResult = finalShantenVal <= 0;
+
+        if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) {
+            DEBUG_SIM_STATS.ryukyoku++;
+        } else {
+            DEBUG_SIM_STATS.wallExhaust++;
+        }
+
         return {
             type: 'draw', point: scoreAdjustment + (isTenpaiResult ? 1000 : -1000), isTenpai: isTenpaiResult,
             finalShanten: finalShantenVal,
