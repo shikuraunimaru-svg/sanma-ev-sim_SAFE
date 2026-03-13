@@ -52,7 +52,7 @@ export function MentsuDisplay({ mentsu, size = 'result' }: Props) {
 
                 return (
                     <TileDisplay
-                        key={idx}
+                        key={`mentsu-tile-${tileToDisplay}-${idx}`}
                         tile={tileToDisplay}
                         size={size}
                         isBack={isAnkanUra}

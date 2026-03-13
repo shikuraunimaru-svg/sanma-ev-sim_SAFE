@@ -152,14 +152,14 @@ export function HandInput({
     const zihai = [27, 28, 29, 30, 31, 32, 33]; // z4 is 30
 
     // Render Helper
-    const renderTileButton = (t: Tile) => {
+    const renderTileButton = (t: Tile, index: number, prefix: string) => {
         const isNorth = t === TILES.z4;
         const isNorthDisabled = isNorth && activeTab !== 'dora';
         const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat) || isNorthDisabled;
 
         return (
-            <div className={disabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}>
-                <TileDisplay key={t} tile={t} onClick={() => !disabled && addTile(t)} />
+            <div key={`${prefix}-${t}-${index}`} className={disabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}>
+                <TileDisplay tile={t} onClick={() => !disabled && addTile(t)} />
             </div>
         );
     };
@@ -196,13 +196,13 @@ export function HandInput({
                     <div className="flex flex-nowrap gap-[2px]">
                         {hand.length === 0 && fixedMentsu.length === 0 && <span className="text-gray-400 italic">牌を選択してください</span>}
                         {hand.map((t: Tile, idx: number) => (
-                            <TileDisplay key={`hand-${idx}`} tile={t} onClick={() => removeTile(idx)} />
+                            <TileDisplay key={`hand-tile-${t}-${idx}`} tile={t} onClick={() => removeTile(idx)} />
                         ))}
                     </div>
 
                     {/* Fixed Mentsu */}
                     {fixedMentsu.map((m: Mentsu, mIdx: number) => (
-                        <div key={`fixed-${mIdx}`} className="relative group">
+                        <div key={`fixed-mentsu-${m.tile}-${mIdx}`} className="relative group">
                             <MentsuDisplay mentsu={m} size="result" />
                             <button
                                 onClick={() => removeMentsu(mIdx)}
@@ -219,7 +219,7 @@ export function HandInput({
                     <span className="text-gray-500">ドラ表示牌:</span>
                     <div className="flex gap-1">
                         {doraIndicators.map((t: Tile, idx: number) => (
-                            <TileDisplay key={`dora-${idx}`} tile={t} size="dora" onClick={() => removeDora(idx)} />
+                            <TileDisplay key={`dora-tile-${t}-${idx}`} tile={t} size="dora" onClick={() => removeDora(idx)} />
                         ))}
                     </div>
                 </div>
@@ -230,7 +230,7 @@ export function HandInput({
             <div className={`flex flex-col gap-4 items-start transition-opacity duration-200 ${isMaxReached ? 'opacity-50 pointer-events-none' : ''}`}>
                 {/* Upper Row: Manzu and Zihai */}
                 <div className="flex flex-row gap-2 items-center justify-start">
-                    {manzu.map((t: Tile) => renderTileButton(t))}
+                    {manzu.map((t: Tile, idx: number) => renderTileButton(t, idx, 'manzu'))}
 
                     {/* Spacer to align Haku/Hatsu/Chun properly under Pinzu. 
                         Pinzu has 9 regular tiles + 1 red.
@@ -239,20 +239,20 @@ export function HandInput({
                         Red 5p is the 10th item in the Pinzu row.
                         So we need (Manzu(2) + Spacer + Zihai(7)) to align dynamically or just use a fixed spacer.
                         A spacer of width roughly equal to 1 tile will push Zihai to right. */}
-                    <div className="w-8 sm:w-10"></div> {/* 1牌分程度のスペース */}
-                    {zihai.map((t: Tile) => renderTileButton(t))}
+                    <div key="spacer-zihai" className="w-8 sm:w-10"></div> {/* 1牌分程度のスペース */}
+                    {zihai.map((t: Tile, idx: number) => renderTileButton(t, idx, 'zihai'))}
                 </div>
 
                 {/* Pinzu Row */}
                 <div className="flex flex-row gap-2 items-center justify-start">
-                    {pinzu.map((t: Tile) => renderTileButton(t))}
-                    {renderTileButton(TILES.p5r)}
+                    {pinzu.map((t: Tile, idx: number) => renderTileButton(t, idx, 'pinzu'))}
+                    {renderTileButton(TILES.p5r, 0, 'pinzu-red')}
                 </div>
 
                 {/* Souzu Row */}
                 <div className="flex flex-row gap-2 items-center justify-start">
-                    {souzu.map((t: Tile) => renderTileButton(t))}
-                    {renderTileButton(TILES.s5r)}
+                    {souzu.map((t: Tile, idx: number) => renderTileButton(t, idx, 'souzu'))}
+                    {renderTileButton(TILES.s5r, 0, 'souzu-red')}
                 </div>
             </div>
         </div>

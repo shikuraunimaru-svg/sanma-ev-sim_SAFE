@@ -10,8 +10,8 @@ import type { Tile } from '../core/tile';
 import { calculateShanten as calculateShantenCore } from '../core/shanten';
 
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, initWallPool, selectUCBNode, pruneWeakNodes, earlyStop, DEBUG_LOGS } = Engine;
-type UCBNode = Engine.UCBNode;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, initWallPool, DEBUG_LOGS } = Engine;
+type Candidate = Engine.Candidate;
 // fullEvalCount は Engine モジュール変数として直接参照 (Engine.fullEvalCount)
 
 import type { SimulationConfig, Action } from './engine';
@@ -223,278 +223,213 @@ export function runBatchSimulations(config: SimulationConfig) {
         });
     }
 
-    const allNodes: UCBNode[] = possibleActions.map(a => ({
+    const allNodes: Candidate[] = possibleActions.map(a => ({
         action: a,
-        visits: 0,
-        totalEV: 0,
-        meanEV: 0,
+        trials: 0,
         sumEV: 0,
-        sumEV2: 0,
+        meanEV: 0,
+        variance: 0,
+        eliminated: false,
         winCount: 0,
         totalPoints: 0,
         tenpaiCount: 0
     }));
 
-    let activeNodes: UCBNode[] = [...allNodes];
-
-    // UCB のメインループパラメータ
-    const isTenpai = (initialShanten === 0);
-    const globalHardLimit = isTenpai ? 60000 : 30000;
-    const TOTAL_TRIALS = Math.min(config.trials ?? 15000, globalHardLimit);
-
-    let totalTrials = 0;
+    let initialRemainingTiles = 0;
+    let totalSimulationSteps = 0; // Total runSinglePath calls 
     const workTrialCounts = new Int8Array(29);
     const workHand27 = new Int8Array(27);
     const workUraCounts = new Int8Array(29);
 
-    if (DEBUG_LOG) {
-        console.log(`[UCB1 Trial Start] Budget: ${TOTAL_TRIALS}, InitCandidates: ${allNodes.length}`);
+    // ==========================================
+    // Phase 1: UCB Search
+    // ==========================================
+    // allNodes の参照をそのまま使用し、フェーズをまたいで統計情報を共有する
+    const ucbNodes: any[] = allNodes;
+
+    // 追加フィールドの初期化
+    for (const node of ucbNodes) {
+        node.visits = 1; // ユーザー指定: 1初期化
+        node.sumEV = 0;
+        node.sumEV2 = 0;
+        node.meanEV = 0;
+        node.winCount = 0;
+        node.totalPoints = 0;
+        node.tenpaiCount = 0;
     }
 
-    let initialRemainingTiles = 0;
-
-    let stopReason = "BUDGET_EXHAUSTED";
-
-    while (totalTrials < TOTAL_TRIALS) {
-        // 定期的な Pruning
-        if (totalTrials > 0 && totalTrials % 500 === 0) {
-            activeNodes = pruneWeakNodes(activeNodes);
-
-            // 候補が1つになったらそこで終了
-            if (activeNodes.length <= 1) {
-                stopReason = "ALL_PRUNED";
-                break;
-            }
-
-            // Early Stop 判定
-            if (earlyStop(activeNodes)) {
-                stopReason = "EARLY_STOP";
-                break;
-            }
+    const updateNodeStats = (node: any, point: number) => {
+        // visits = 1 スタートの場合、1回目の実行で visits を 1 のままにするか 2 にするか。
+        // 一般的な UCB 実装では visits = 1 は「既に1回探索済み」を意味する。
+        // ここでは 実行 -> 加算 -> visitsインクリメント の順にする。
+        node.sumEV += point;
+        node.sumEV2 += point * point;
+        if (point > 0) {
+            node.winCount++;
+            node.totalPoints += point;
         }
+        node.meanEV = node.sumEV / node.visits;
+        node.visits++; // 次回の計算用にインクリメント
+    };
 
-        // 各ノード最低50回は探索を保証する
-        let selectedNode: UCBNode | null = null;
-        for (const n of activeNodes) {
-            if (n.visits < 50) {
-                selectedNode = n;
-                break;
-            }
-        }
+    const INITIAL_ROUND_ROBIN = 200;
+    const TOTAL_INITIAL_STEPS = 2000;
 
-        const node = selectedNode ?? selectUCBNode(activeNodes);
+    // ==========================================
+    // Phase 1.1: Round Robin Exploration
+    // ==========================================
+    // 全候補を最低限均等に探索し、初期 EV を確定させる
+    for (let i = 0; i < INITIAL_ROUND_ROBIN; i++) {
+        const node = ucbNodes[i % ucbNodes.length];
 
-        // CRN (Common Random Numbers) 導入: 
-        // 試行回数(visits)に応じて使用する山とシードを固定し、候補間の分散を抑える
-        const crnIndex = node.visits % wallPool.length;
+        const crnIndex = totalSimulationSteps % wallPool.length;
         const wall = wallPool[crnIndex];
-
+        const seed = totalSimulationSteps >>> 0;
         const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
 
-        // シードも visits に固定し、他の打牌候補の同じ visits 目と完全に条件を一致させる
-        const seed = node.visits >>> 0;
+        workTrialCounts.fill(0);
+        workHand27.fill(0);
+        workUraCounts.fill(0);
+
 
         const result = runSinglePath(
             afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
             currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
             templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, initialShanten, 0, totalTrials
+            seed, initialShanten, 0, totalSimulationSteps
         );
 
-        if (totalTrials === 0) {
-            initialRemainingTiles = result.initialRemainingTiles;
-        }
+        if (totalSimulationSteps === 0) initialRemainingTiles = result.initialRemainingTiles;
 
-        const ev = result.point;
+        updateNodeStats(node, result.point);
+        if (result.finalShanten === 0) node.tenpaiCount++;
 
-        node.visits++;
-        node.totalEV += ev;
-        node.meanEV = node.totalEV / node.visits;
-        node.sumEV += ev;
-        node.sumEV2 += ev * ev;
-
-        // === 判定コード修正 (流局テンパイ対応・和了含む) ===
-        // console.log("shantenEnd", result.finalShanten); // 大量に出るので一時的にコメントアウト推奨ですが指示通り追加します。もし重い場合は消してください。
-        if (DEBUG_LOG) {
-            console.log("shantenEnd", result.finalShanten);
-        }
-
-        if (result.finalShanten === -1) {
-            node.winCount++;
-            node.tenpaiCount++;   // 和了は聴牌でもある
-            node.totalPoints += result.point;
-        } else if (result.finalShanten === 0) {
-            node.tenpaiCount++;
-        }
-
-        totalTrials++;
+        totalSimulationSteps++;
     }
 
-    // ========== UCB Kết Quả の集計 ==========
-    allNodes.sort((a, b) => b.meanEV - a.meanEV);
+    // ==========================================
+    // Phase 1.2: UCB Search
+    // ==========================================
+    while (totalSimulationSteps < TOTAL_INITIAL_STEPS) {
+        // 純粋な UCB 選択 (Round Robin 済みのため filter は不要)
+        const selectedNode = Engine.selectUCBNode(ucbNodes);
 
-    const results: any[] = allNodes.map(node => {
-        const winRate = node.visits > 0 ? node.winCount / node.visits : 0;
-        const avgPoint = node.winCount > 0 ? node.totalPoints / node.winCount : 0;
-        const tenpaiRate = node.visits > 0 ? node.tenpaiCount / node.visits : 0;
+        const crnIndex = totalSimulationSteps % wallPool.length;
+        const wall = wallPool[crnIndex];
+        const seed = totalSimulationSteps >>> 0;
+        const afterHand = selectedNode.action.type === 'discard' ? removeOneTile(myHand, (selectedNode.action as any).tile) : myHand;
 
-        if (DEBUG_LOG) {
-            console.log("rates", {
-                trialCount: node.visits,
-                winCount: node.winCount,
-                tenpaiCount: node.tenpaiCount,
-                winRate,
-                tenpaiRate
-            });
-        }
+        workTrialCounts.fill(0);
+        workHand27.fill(0);
+        workUraCounts.fill(0);
 
-        const variance = node.visits > 1 ? (node.sumEV2 / node.visits) - (node.meanEV * node.meanEV) : 0;
-        const stdDev = Math.sqrt(Math.max(variance, 0));
-        const ci = node.visits > 1 ? 1.96 * stdDev / Math.sqrt(node.visits) : 0;
+        const result = runSinglePath(
+            afterHand, fixedMentsu, selectedNode.action, myKita, otherKita, doraIndicators,
+            currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
+            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+            seed, initialShanten, 0, totalSimulationSteps
+        );
+
+        updateNodeStats(selectedNode, result.point);
+        if (result.finalShanten === 0) selectedNode.tenpaiCount++;
+
+        totalSimulationSteps++;
+    }
+
+    // ==========================================
+    // Phase 2: Top-3 CI Racing
+    // ==========================================
+    // results 配列を構築せず、ucbNodes の参照をそのまま使って上位 3 件を特定する
+    ucbNodes.sort((a, b) => b.meanEV - a.meanEV);
+    const racingNodes = ucbNodes.slice(0, Math.min(3, ucbNodes.length));
+
+    const RACING_MAX_TRIALS = 3000;
+
+    function computeLocalCI(node: any) {
+        if (node.visits < 2) return { lower: -Infinity, upper: Infinity };
+        // 指示された分散計算式: variance = (sumEV2 - visits * meanEV^2) / (visits - 1)
+        const variance = (node.sumEV2 - node.visits * node.meanEV * node.meanEV) / (node.visits - 1);
+        const stderr = Math.sqrt(Math.max(variance, 0) / node.visits);
+        const delta = 1.96 * stderr;
+        return {
+            lower: node.meanEV - delta,
+            upper: node.meanEV + delta
+        };
+    }
+
+    let racingTrials = 0;
+    let racingStopReason = "MAX_TRIALS";
+
+    while (racingTrials < RACING_MAX_TRIALS) {
+        // visits 最小の候補を選択 (参照先のノードが更新される)
+        racingNodes.sort((a, b) => a.visits - b.visits);
+        const node = racingNodes[0];
+
+        const crnIndex = totalSimulationSteps % wallPool.length;
+        const wall = wallPool[crnIndex];
+        const seed = totalSimulationSteps >>> 0;
+        const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+
+        workTrialCounts.fill(0);
+        workHand27.fill(0);
+        workUraCounts.fill(0);
+
+        const result = runSinglePath(
+            afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+            currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
+            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+            seed, initialShanten, 0, totalSimulationSteps
+        );
+
+        updateNodeStats(node, result.point);
+        if (result.finalShanten === 0) node.tenpaiCount++;
+
+        totalSimulationSteps++;
+        racingTrials++;
+
+    }
+
+    // ========== Results Aggregation ==========
+    // CI Racing で更新された racingNodes を含む ucbNodes 全体を最新の meanEV で再ソート
+    ucbNodes.sort((a, b) => b.meanEV - a.meanEV);
+
+    const results: any[] = ucbNodes.map(node => {
+        const ci = computeLocalCI(node);
+        const visits = node.visits || 0;
+        const winCount = node.winCount || 0;
 
         return {
             action: node.action,
-            ev: node.meanEV,
-            evMean: node.meanEV,
-            trialCount: node.visits,
-            winRate,
-            avgScore: avgPoint,
-            tenpaiRate,
+            ev: visits > 0 ? node.meanEV : 0,
+            evMean: visits > 0 ? node.meanEV : 0,
+            trialCount: visits,
+            winRate: visits > 0 ? winCount / visits : 0,
+            avgScore: winCount > 0 ? node.totalPoints / winCount : 0,
+            tenpaiRate: visits > 0 ? node.tenpaiCount / visits : 0,
             shantenBefore: initialShanten,
             shantenAfter: calculateShanten(node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand, fixedMentsu.length),
-            converged: false,
-            totalAgariTurnSum: 0,
-            agariCount: 0,
-            stdError: stdDev / Math.sqrt(Math.max(node.visits, 1)),
-            confidence95: ci,
-            ciLower: node.meanEV - ci,
-            ciUpper: node.meanEV + ci,
-            lcb: node.meanEV - ci
+            converged: racingStopReason === "CI_CONVERGED",
+            // 以下の統計量は visits > 1 の場合のみ計算
+            stdError: visits > 1 ? Math.sqrt(Math.max(((node.sumEV2 - visits * node.meanEV * node.meanEV) / (visits - 1)), 0)) / Math.sqrt(visits) : 0,
+            confidence95: visits > 1 ? (Math.abs(ci.upper - ci.lower) / 2) : 0,
+            ciLower: visits > 0 ? ci.lower : 0,
+            ciUpper: visits > 0 ? ci.upper : 0,
+            lcb: visits > 0 ? ci.lower : 0
         };
     });
-
-    if (DEBUG_LOG) {
-        console.log(`=== UCB1 END: ${stopReason} ===`);
-        console.log(`Total Trials: ${totalTrials}/${TOTAL_TRIALS}`);
-        console.log(
-            "UCB nodes",
-            allNodes.map(n => ({
-                tile: (n.action as any).tile,
-                visits: n.visits
-            }))
-        );
-        const winner = allNodes[0];
-        const runnerUp = allNodes[1];
-        console.log(`Best: ${winner.meanEV.toFixed(1)} (n=${winner.visits})`);
-        if (runnerUp) console.log(`Second: ${runnerUp.meanEV.toFixed(1)} (n=${runnerUp.visits})`);
-    }
 
     const endTime = performance.now();
     const summary = createSummary(config, initialRemainingTiles, endTime - startTime);
 
-    // ========== Final Re-evaluation ==========
-    results.sort((a, b) => b.evMean - a.evMean);
-    const FINAL_REEVAL_TRIALS = 2000;
-    const finalists = results.slice(0, 2);
-
-    if (DEBUG_LOG) {
-        console.log("Final Re-evaluation start");
-    }
-
-    // CRNの基点: 上位2候補が全く同じ山リスト・シード条件で戦うように固定値をとる
-    const finalReevalBaseIndex = totalTrials;
-
-    for (const node of finalists) {
-        if (DEBUG_LOG) {
-            const tileStr = node.action.type === 'discard' ? tileToString((node.action as any).tile) : node.action.type;
-            console.log(`Candidate ${tileStr} +${FINAL_REEVAL_TRIALS} trials`);
-        }
-
-        const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
-
-        // Recover totals to continue adding
-        let totalEV = node.evMean * node.trialCount;
-        let totalWinCount = Math.round(node.winRate * node.trialCount);
-        let totalTenpaiCount = Math.round(node.tenpaiRate * node.trialCount);
-        let totalAvgScoreSum = node.avgScore * totalWinCount;
-
-        for (let i = 0; i < FINAL_REEVAL_TRIALS; i++) {
-            // CRN: finalists 同士で完全に同じ山とシードを順番に使用する
-            const crnIndex = (finalReevalBaseIndex + i) % wallPool.length;
-            const wall = wallPool[crnIndex];
-            const seed = (finalReevalBaseIndex + i) >>> 0;
-
-            const simResult = runSinglePath(
-                afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
-                currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
-                templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-                seed, 0, 0, 9999
-            );
-
-            totalEV += simResult.point;
-            node.trialCount += 1;
-
-            if (simResult.finalShanten === -1) {
-                totalWinCount++;
-                totalTenpaiCount++;
-                totalAvgScoreSum += simResult.point;
-            } else if (simResult.finalShanten === 0) {
-                totalTenpaiCount++;
-            }
-        }
-
-        totalTrials += FINAL_REEVAL_TRIALS;
-        node.evMean = totalEV / node.trialCount;
-        node.ev = node.evMean; // Keep 'ev' and 'evMean' in sync
-        node.winRate = totalWinCount / node.trialCount;
-        node.tenpaiRate = totalTenpaiCount / node.trialCount;
-        node.avgScore = totalWinCount > 0 ? totalAvgScoreSum / totalWinCount : 0;
-    }
-
-    results.sort((a, b) => b.evMean - a.evMean);
-
-    // ===============================
-    // Finalize average agari turn
-    // ===============================
-    results.forEach(res => {
-        if (res.agariCount > 0) {
-            res.averageAgariTurn = res.totalAgariTurnSum / res.agariCount;
-            res.averageAgariAfterTurns = Math.max(0, res.averageAgariTurn - config.currentTurn);
-        } else {
-            res.averageAgariTurn = null;
-            res.averageAgariAfterTurns = null;
-        }
-    });
-
-    if (DEBUG_LOG) {
-        console.log("FINAL_AVG_DEBUG",
-            results.map(c => ({
-                tile: (c.action as any).tile ? tileToString((c.action as any).tile) : c.action.type,
-                agariCount: c.agariCount,
-                avgTurn: c.averageAgariTurn,
-                wins: c.wins,
-                trialCount: c.trialCount,
-                avgScore: c.avgScore.toFixed(1),   // ← P2_EVAL との比較用
-                evMean: c.evMean.toFixed(1)
-            }))
-        );
-    }
-
-    // Phase 74/81: 結果をキャッシュに保存
+    // Results formatting and cache saving
     results.forEach((r: any) => {
         const handAfter = r.action.type === 'discard' ? removeOneTile(myHand, r.action.tile) : myHand;
-        const cacheKey = Engine.buildStateKey(
-            handAfter,
-            config.currentTurn || 0,
-            fixedMentsu.length,
-            myKita,
-            otherKita
-        );
+        const cacheKey = Engine.buildStateKey(handAfter, config.currentTurn || 0, fixedMentsu.length, myKita, otherKita);
         Engine.saveStateCache(cacheKey, r.evMean);
     });
 
     self.postMessage({ type: 'RESULT', results, summary });
-    logPerformanceStats(); // Phase 75: 計測結果を出力
+    logPerformanceStats();
     clearShantenCache();
 }
 
@@ -641,6 +576,15 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
             throw new Error("DUPLICATE_ACTION_DETECTED: " + key);
         }
         keySet.add(key);
+    }
+    if (DEBUG_LOG) {
+        const tileKinds = new Set<number>();
+        for (const a of actions) {
+            if (a.type !== 'discard') continue;
+            const key = toNormalFive(hand[a.tileInd]);
+            tileKinds.add(key);
+        }
+        console.log("UNIQUE_TILE_TYPES", tileKinds.size);
     }
 
 

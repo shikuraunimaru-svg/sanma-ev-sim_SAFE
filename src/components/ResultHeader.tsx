@@ -26,7 +26,7 @@ export function ResultHeader({ hand, fixedMentsu, doraIndicators, kitaCount, exe
                 {fixedMentsu.length > 0 && <div className="w-1 h-8 bg-gray-300 mx-1" />}
                 <div className="flex flex-nowrap gap-2">
                     {fixedMentsu.map((m, idx) => (
-                        <MentsuDisplay key={`summary-fixed-${idx}`} mentsu={m} size="result" />
+                        <MentsuDisplay key={`summary-mentsu-${m.tile}-${idx}`} mentsu={m} size="result" />
                     ))}
                 </div>
             </div>

@@ -270,7 +270,7 @@ export default function App() {
 
                   <div className="flex flex-nowrap gap-2">
                     {winResult.bestStructure.mentsu.map((m: any, idx: number) => (
-                      <MentsuDisplay key={`win-mentsu-${idx}`} mentsu={m} size="result" />
+                      <MentsuDisplay key={`win-mentsu-${m.tile}-${idx}`} mentsu={m} size="result" />
                     ))}
                   </div>
                 </div>
@@ -280,7 +280,7 @@ export default function App() {
                     <h4 className="font-bold text-yellow-900 mb-2 border-b border-yellow-200 pb-1">役一覧</h4>
                     <ul className="space-y-1">
                       {winResult.bestYaku.yakuList.map((y, idx) => (
-                        <li key={idx} className="flex justify-between text-yellow-900">
+                        <li key={`${y.name}-${idx}`} className="flex justify-between text-yellow-900">
                           <span>{y.name}</span>
                           <span className="font-mono">{y.han}翻</span>
                         </li>

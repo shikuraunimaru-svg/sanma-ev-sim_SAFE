@@ -1711,7 +1711,60 @@ export function countDora(hand: Tile[], doraInds: Tile[], fixedMentsu: Mentsu[] 
 }
 
 // =========================================================================
-// Phase 77: UCB1 Monte Carlo Search
+// Phase 102: CI Racing
+// =========================================================================
+
+export const DEBUG_CI_RACING = true;
+
+export interface Candidate {
+    action: Action;
+    trials: number;
+    sumEV: number;
+    meanEV: number;
+    variance: number;
+    eliminated: boolean;
+    // For final results sync
+    winCount: number;
+    tenpaiCount: number;
+    totalPoints: number;
+}
+
+export function updateCandidateStats(candidate: Candidate, ev: number): void {
+    candidate.sumEV += ev;
+    candidate.trials++;
+
+    // Welford's algorithm for online variance
+    if (candidate.trials === 1) {
+        candidate.meanEV = ev;
+        candidate.variance = 0;
+    } else {
+        const oldMean = candidate.meanEV;
+        candidate.meanEV += (ev - oldMean) / candidate.trials;
+        // Keep sum of squared differences in `variance` temporarily,
+        // then divide by (trials - 1) when requested in computeCI
+        const delta2 = ev - candidate.meanEV;
+        // To strictly follow Welford: M2 += (val - oldMean)*(val - newMean)
+        // Here we store M2 directly into `variance` variable until CI computation
+        candidate.variance += (ev - oldMean) * delta2;
+    }
+}
+
+export function computeCI(candidate: Candidate): { lowerBound: number, upperBound: number } {
+    if (candidate.trials < 2) {
+        return { lowerBound: -Infinity, upperBound: Infinity };
+    }
+    const sampleVariance = candidate.variance / (candidate.trials - 1);
+    const stdDev = Math.sqrt(Math.max(sampleVariance, 0));
+    const ci = 1.96 * stdDev / Math.sqrt(candidate.trials);
+    return {
+        lowerBound: candidate.meanEV - ci,
+        upperBound: candidate.meanEV + ci
+    };
+}
+
+
+// =========================================================================
+// Phase 77: UCB1 Monte Carlo Search (To be pruned, kept for legacy compat)
 // =========================================================================
 
 export type UCBNode = {
@@ -1726,7 +1779,7 @@ export type UCBNode = {
     tenpaiCount: number;
 };
 
-export function computeUCB(node: UCBNode, totalVisits: number, exploration = 1.4): number {
+export function computeUCB(node: UCBNode, totalVisits: number, exploration = 5000): number {
     if (node.visits === 0) return Infinity;
     return node.meanEV + exploration * Math.sqrt(Math.log(totalVisits) / node.visits);
 }
@@ -1761,45 +1814,3 @@ export function pruneWeakNodes(nodes: UCBNode[]): UCBNode[] {
     });
 }
 
-export function earlyStop(nodes: UCBNode[]): boolean {
-    if (nodes.length < 2) return false;
-
-    // 早期終了の最小試行回数 (過早に収束するのを防ぐ)
-    const MIN_TRIALS = 3000;
-    const totalTrials = nodes.reduce((sum, n) => sum + n.visits, 0);
-    if (totalTrials < MIN_TRIALS) {
-        return false;
-    }
-
-    const sorted = [...nodes].sort((a, b) => b.meanEV - a.meanEV);
-    const best = sorted[0];
-    const second = sorted[1];
-
-    if (best.visits < 50 || second.visits < 50) return false;
-
-    const getCI = (node: UCBNode) => {
-        if (node.visits < 2) return Infinity; // Prevent 0 division
-        const variance = (node.sumEV2 / node.visits) - (node.meanEV * node.meanEV);
-        const stdDev = Math.sqrt(Math.max(variance, 0));
-        return 1.96 * stdDev / Math.sqrt(node.visits);
-    };
-
-    const bestCI = getCI(best);
-    const secondCI = getCI(second);
-
-    const bestLower = best.meanEV - bestCI;
-    const secondUpper = second.meanEV + secondCI;
-
-    if (bestLower > secondUpper) {
-        return true;
-    }
-
-    if (best.meanEV !== 0) {
-        const gap = (best.meanEV - second.meanEV) / Math.abs(best.meanEV);
-        if (gap > 0.10) {
-            return true;
-        }
-    }
-
-    return false;
-}

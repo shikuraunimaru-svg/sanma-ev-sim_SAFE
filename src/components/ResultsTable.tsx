@@ -25,10 +25,10 @@ export function ResultsTable({ results }: Props) {
                     </tr>
                 </thead>
                 <tbody className="bg-white">
-                    {sorted.map((res) => {
+                    {sorted.map((res, idx) => {
                         const isBest = res === best;
                         const action = res.action;
-                        const key = `${action.type}-${'tile' in action ? action.tile : ''}-${'riichi' in action ? action.riichi : ''}`;
+                        const key = `result-${action.type}-${'tile' in action ? action.tile : ''}-${idx}`;
 
                         // Calculate EV loss
                         let lossDisplay = null;
@@ -107,8 +107,8 @@ export function ResultsTable({ results }: Props) {
                                                 )}
                                             </div>
                                             <div className="flex flex-wrap gap-1 max-w-[280px]">
-                                                {res.effectiveTiles.map(et => (
-                                                    <div key={et.tile} className="w-[18px] h-auto flex-shrink-0">
+                                                {res.effectiveTiles.map((et, idx) => (
+                                                    <div key={`et-tile-${et.tile}-${idx}`} className="w-[18px] h-auto flex-shrink-0">
                                                         <TileDisplay
                                                             tile={et.tile}
                                                             size="result"

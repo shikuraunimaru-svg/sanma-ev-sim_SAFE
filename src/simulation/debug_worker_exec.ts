@@ -1,9 +1,9 @@
 // @ts-nocheck
 
-import { runSinglePath, type Action } from './engine';
-import { TILES } from '../core/tile';
-import { calculateShanten } from '../core/shanten';
-import { getPossibleActions } from './simulator.worker';
+import { runSinglePath, type Action } from './engine.js';
+import { TILES } from '../core/tile.js';
+import { calculateShanten } from '../core/shanten.js';
+import { getPossibleActions } from './simulator.worker.js';
 
 // Mocking self.postMessage for local test
 const mockPostMessage = (msg: any) => {

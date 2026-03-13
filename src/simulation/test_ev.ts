@@ -1,8 +1,8 @@
 // @ts-nocheck
 
-import { runSinglePath } from './engine';
-import type { Action } from './engine';
-import { TILES } from '../core/tile';
+import { runSinglePath } from './engine.js';
+import type { Action } from './engine.js';
+import { TILES } from '../core/tile.js';
 
 function testEv() {
     console.log("Running EV Verification...");
