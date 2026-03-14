@@ -1,24 +1,23 @@
-const DEBUG_LOG = false;
-
-if (DEBUG_LOG) {
-    console.log("WORKER_VERSION_PHASE58_ACTIVE");
-    console.log("WORKER_BUILD_ID", Date.now());
-    console.log("FAST_WIN_EVAL_ACTIVE"); // Phase71: scoreWinningHandFast が有効
-}
 import { toNormalFive, TILES, tileToString, isRedFive } from '../core/tile';
 import type { Tile } from '../core/tile';
-import { calculateShanten as calculateShantenCore } from '../core/shanten';
-
+import { toSanmaTile } from '../core/sanmaTiles';
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, initWallPool, DEBUG_LOGS } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, reverseWallPool, initWallPool, DEBUG, getUkeireInfo27 } = Engine;
 type Candidate = Engine.Candidate;
 // fullEvalCount は Engine モジュール変数として直接参照 (Engine.fullEvalCount)
 
 import type { SimulationConfig, Action } from './engine';
 
 const calculateShanten = (hand: Tile[] | Int8Array, fixedCount: number) => {
-    if (hand instanceof Int8Array) return getShantenMemoized(hand, fixedCount);
-    return calculateShantenCore(hand, fixedCount);
+    if (hand instanceof Int8Array) {
+        return getShantenMemoized(hand, fixedCount);
+    }
+    const hand27 = new Int8Array(27);
+    for (const t of hand) {
+        const s = toSanmaTile(t);
+        if (s !== -1) hand27[s]++;
+    }
+    return getShantenMemoized(hand27, fixedCount);
 };
 
 // 以前の Tile[] べースの関数 (互換性維持)
@@ -127,7 +126,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     }
 
     const possibleActions = getPossibleActions(config);
-    if (DEBUG_LOG) {
+    if (DEBUG.actionGen) {
         console.log("GET_POSSIBLE_ACTIONS_RETURNED", possibleActions.length, "actions");
 
         console.log("CANDIDATES_SOURCE", possibleActions.map(a => ({
@@ -164,7 +163,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     const { templateMountain, templateCounts } = buildWallTemplate(visible, drawsConsumed);
 
     const debugWallCounts = (wall: Uint8Array) => {
-        if (!DEBUG_LOGS.wallCounts) return;
+        if (!DEBUG.wall) return;
         const counts = new Array(34).fill(0);
         for (let i = 0; i < wall.length; i++) {
             counts[wall[i]]++;
@@ -174,7 +173,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     debugWallCounts(templateMountain);
 
     const debugUniqueTiles = (wall: Uint8Array) => {
-        if (!DEBUG_LOGS.wallCounts) return;
+        if (!DEBUG.wall) return;
         const counts: Record<string, number> = {};
         for (let i = 0; i < wall.length; i++) {
             const tile = TILE_TYPES[wall[i]];
@@ -189,11 +188,11 @@ export function runBatchSimulations(config: SimulationConfig) {
     // ターンの進行により templateMountain の内容（可視牌など）が変わるため、
     // プールが空の場合だけでなく毎ターン更新するのが安全です。
     initWallPool(templateMountain);
-    if (DEBUG_LOG) {
+    if (DEBUG.wall) {
         console.log("WallPool initialized:", wallPool.length);
     }
 
-    if (DEBUG_LOG) {
+    if (DEBUG.wall) {
         console.log("WALL_TEMPLATE_BUILT", templateMountain.length); // シミュレーション全体で1回だけ出力
     }
 
@@ -212,7 +211,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     const availableToPlayer = liveWallLimit - 26;
     const selfEffectiveWallCount = availableToPlayer;
 
-    if (DEBUG_LOG) {
+    if (DEBUG.wall) {
         console.log("TURN_DEBUG", { currentTurn: config.currentTurn, drawsConsumed });
         console.log("SANMA_WALL_FINAL_CHECK", { remainingWall, deadWallEffectiveCount, liveWallLimit, availableToPlayer });
 
@@ -272,68 +271,54 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.visits++; // 次回の計算用にインクリメント
     };
 
-    const INITIAL_ROUND_ROBIN = 200;
     const TOTAL_INITIAL_STEPS = 2000;
 
     // ==========================================
-    // Phase 1.1: Round Robin Exploration
+    // Phase 1: Batch CRN + Antithetic Search
     // ==========================================
-    // 全候補を最低限均等に探索し、初期 EV を確定させる
-    for (let i = 0; i < INITIAL_ROUND_ROBIN; i++) {
-        const node = ucbNodes[i % ucbNodes.length];
+    // 全候補に対し、同一の wall とその反転 (Antithetic) を用いて評価する
+    const batchWallSamples = Math.floor(TOTAL_INITIAL_STEPS / (ucbNodes.length * 2));
+    
+    for (let w = 0; w < batchWallSamples; w++) {
+        const wallIndex = w % wallPool.length;
+        const wall = wallPool[wallIndex];
+        const revWall = reverseWallPool[wallIndex];
+        
+        // Antithetic 用の独立したシード
+        const seed1 = w >>> 0;
+        const seed2 = (w >>> 0) ^ 0x9e3779b9;
 
-        const crnIndex = totalSimulationSteps % wallPool.length;
-        const wall = wallPool[crnIndex];
-        const seed = totalSimulationSteps >>> 0;
-        const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+        for (const node of ucbNodes) {
+            const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
 
-        workTrialCounts.fill(0);
-        workHand27.fill(0);
-        workUraCounts.fill(0);
+            // 試行1 (Normal)
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res1 = runSinglePath(
+                afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+                currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed1, initialShanten, 0, totalSimulationSteps
+            );
+            updateNodeStats(node, res1.point);
+            if (res1.finalShanten <= 0) node.tenpaiCount++;
+            totalSimulationSteps++;
 
-
-        const result = runSinglePath(
-            afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
-            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, initialShanten, 0, totalSimulationSteps
-        );
-
-        if (totalSimulationSteps === 0) initialRemainingTiles = result.initialRemainingTiles;
-
-        updateNodeStats(node, result.point);
-        if (result.finalShanten === 0) node.tenpaiCount++;
-
-        totalSimulationSteps++;
-    }
-
-    // ==========================================
-    // Phase 1.2: UCB Search
-    // ==========================================
-    while (totalSimulationSteps < TOTAL_INITIAL_STEPS) {
-        // 純粋な UCB 選択 (Round Robin 済みのため filter は不要)
-        const selectedNode = Engine.selectUCBNode(ucbNodes);
-
-        const crnIndex = totalSimulationSteps % wallPool.length;
-        const wall = wallPool[crnIndex];
-        const seed = totalSimulationSteps >>> 0;
-        const afterHand = selectedNode.action.type === 'discard' ? removeOneTile(myHand, (selectedNode.action as any).tile) : myHand;
-
-        workTrialCounts.fill(0);
-        workHand27.fill(0);
-        workUraCounts.fill(0);
-
-        const result = runSinglePath(
-            afterHand, fixedMentsu, selectedNode.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
-            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, initialShanten, 0, totalSimulationSteps
-        );
-
-        updateNodeStats(selectedNode, result.point);
-        if (result.finalShanten === 0) selectedNode.tenpaiCount++;
-
-        totalSimulationSteps++;
+            // 試行2 (Antithetic)
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res2 = runSinglePath(
+                afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+                currentTurn, isDealer, revWall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed2, initialShanten, 0, totalSimulationSteps
+            );
+            updateNodeStats(node, res2.point);
+            if (res2.finalShanten <= 0) node.tenpaiCount++;
+            totalSimulationSteps++;
+        }
+        
+        if (DEBUG.wall && w % 10 === 0) {
+            console.log("Batch CRN progress:", { wallIndex: w, totalSteps: totalSimulationSteps });
+        }
     }
 
     // ==========================================
@@ -360,43 +345,81 @@ export function runBatchSimulations(config: SimulationConfig) {
     let racingTrials = 0;
     let racingStopReason = "MAX_TRIALS";
 
-    while (racingTrials < RACING_MAX_TRIALS) {
-        // visits 最小の候補を選択 (参照先のノードが更新される)
-        racingNodes.sort((a, b) => a.visits - b.visits);
-        const node = racingNodes[0];
+    const racingWallSamples = Math.floor(RACING_MAX_TRIALS / (racingNodes.length * 2));
 
-        const crnIndex = totalSimulationSteps % wallPool.length;
-        const wall = wallPool[crnIndex];
-        const seed = totalSimulationSteps >>> 0;
-        const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+    for (let w = 0; w < racingWallSamples; w++) {
+        const wallIndex = totalSimulationSteps % wallPool.length;
+        const wall = wallPool[wallIndex];
+        const revWall = reverseWallPool[wallIndex];
+        const seed1 = totalSimulationSteps >>> 0;
+        const seed2 = (totalSimulationSteps >>> 0) ^ 0x9e3779b9;
 
-        workTrialCounts.fill(0);
-        workHand27.fill(0);
-        workUraCounts.fill(0);
+        for (const node of racingNodes) {
+            const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
 
-        const result = runSinglePath(
-            afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
-            currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
-            templateCounts as any, workTrialCounts, workHand27, workUraCounts,
-            seed, initialShanten, 0, totalSimulationSteps
-        );
+            // res1
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res1 = runSinglePath(
+                afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+                currentTurn, isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed1, initialShanten, 0, totalSimulationSteps
+            );
+            updateNodeStats(node, res1.point);
+            if (res1.finalShanten <= 0) node.tenpaiCount++;
+            
+            // res2
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res2 = runSinglePath(
+                afterHand, fixedMentsu, node.action, myKita, otherKita, doraIndicators,
+                currentTurn, isDealer, revWall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed2, initialShanten, 0, totalSimulationSteps + 1
+            );
+            updateNodeStats(node, res2.point);
+            if (res2.finalShanten <= 0) node.tenpaiCount++;
 
-        updateNodeStats(node, result.point);
-        if (result.finalShanten === 0) node.tenpaiCount++;
-
-        totalSimulationSteps++;
-        racingTrials++;
-
+            totalSimulationSteps += 2;
+            racingTrials += 2;
+        }
     }
 
     // ========== Results Aggregation ==========
-    // CI Racing で更新された racingNodes を含む ucbNodes 全体を最新の meanEV で再ソート
     ucbNodes.sort((a, b) => b.meanEV - a.meanEV);
+
+    // 有効牌計算用の「可視牌カウント」を計算（巡目消費抜き、赤5合算）
+    const visibilityCounts29 = getInitialCounts();
+    if (DEBUG.ukeire) {
+        console.log("UKEIRE_VISIBLE_SOURCE", visible.map(t => tileToString(t)));
+    }
+    for (const t of visible) {
+        const idx = TILE_TYPES.indexOf(t);
+        if (DEBUG.ukeire) {
+            console.log("DECREMENT_TRACE", { tile: tileToString(t), id: t, index: idx, before: idx !== -1 ? visibilityCounts29[idx] : -1 });
+        }
+        if (idx !== -1 && visibilityCounts29[idx] > 0) visibilityCounts29[idx]--;
+    }
+    const ukeireCounts27 = new Int8Array(27);
+    for (let i = 0; i < 29; i++) {
+        const s = toSanmaTile(TILE_TYPES[i]);
+        if (s !== -1) ukeireCounts27[s] += visibilityCounts29[i];
+    }
+    if (DEBUG.ukeire) {
+        console.log("UKEIRE_COUNTS_27", ukeireCounts27);
+    }
 
     const results: any[] = ucbNodes.map(node => {
         const ci = computeLocalCI(node);
         const visits = node.visits || 0;
         const winCount = node.winCount || 0;
+
+        const handAfter = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+        const hand27 = new Int8Array(27);
+        for (const t of handAfter) {
+            const s = toSanmaTile(t);
+            if (s !== -1) hand27[s]++;
+        }
+        const ukeire = getUkeireInfo27(hand27, fixedMentsu.length, ukeireCounts27);
 
         return {
             action: node.action,
@@ -407,9 +430,10 @@ export function runBatchSimulations(config: SimulationConfig) {
             avgScore: winCount > 0 ? node.totalPoints / winCount : 0,
             tenpaiRate: visits > 0 ? node.tenpaiCount / visits : 0,
             shantenBefore: initialShanten,
-            shantenAfter: calculateShanten(node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand, fixedMentsu.length),
+            shantenAfter: calculateShanten(handAfter, fixedMentsu.length),
+            effectiveTileTypes: ukeire.typeCount,
+            effectiveTileCount: ukeire.tileCount,
             converged: racingStopReason === "CI_CONVERGED",
-            // 以下の統計量は visits > 1 の場合のみ計算
             stdError: visits > 1 ? Math.sqrt(Math.max(((node.sumEV2 - visits * node.meanEV * node.meanEV) / (visits - 1)), 0)) / Math.sqrt(visits) : 0,
             confidence95: visits > 1 ? (Math.abs(ci.upper - ci.lower) / 2) : 0,
             ciLower: visits > 0 ? ci.lower : 0,
@@ -429,7 +453,9 @@ export function runBatchSimulations(config: SimulationConfig) {
     });
 
     self.postMessage({ type: 'RESULT', results, summary });
-    logPerformanceStats();
+    if (DEBUG.performance) {
+        logPerformanceStats();
+    }
     clearShantenCache();
 }
 
@@ -449,7 +475,7 @@ function normalizeTo14Tiles(hand: Tile[]): Tile[] {
 }
 
 export function getPossibleActions(config: SimulationConfig): Action[] {
-    if (DEBUG_LOG) {
+    if (DEBUG.actionGen) {
         console.log("GET_POSSIBLE_ACTIONS_CALLED");
         console.log("ACTION_GEN_ENTRY", {
             hand: config.myHand.map(tileToString),
@@ -472,7 +498,7 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
     const normalizedHand = normalizeTo14Tiles(hand);
     const shanten = calculateShanten(normalizedHand, config.fixedMentsu.length);
 
-    if (DEBUG_LOG) {
+    if (DEBUG.actionGen) {
         console.log("RIICHI_CHECK", {
             shanten,
             isMenzen,
@@ -504,17 +530,15 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         }
     }
 
-    if (DEBUG_LOG) {
+    if (DEBUG.actionGen) {
         console.log("DISCARD_MAP_SIZE", discardMap.size);
-        console.log("MAP_UNIQUE_SIZE", discardMap.size);
-        console.log("DISCARD_MAP_KEYS", [...discardMap.values()].map(idx => tileToString(hand[idx])));
     }
 
     // ② Mapからのみdiscard生成
     for (const [_normalKey, tileInd] of discardMap.entries()) {
         const tile = hand[tileInd];
 
-        if (DEBUG_LOG) {
+        if (DEBUG.actionGen) {
             console.log("DISCARD_MAP_DEBUG", {
                 tileInd,
                 tileType: toNormalFive(tile),
@@ -523,14 +547,6 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         }
 
         const generateDiscard = (riichi: boolean) => {
-            if (DEBUG_LOG) {
-                console.log("DISCARD_GENERATED", {
-                    tileInd,
-                    tileName: tileToString(tile),
-                    riichi,
-                    source: "discardMap"  // discardMap 経由であることを明示
-                });
-            }
             actions.push({
                 type: 'discard',
                 tile,
@@ -556,7 +572,7 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         }
     }
 
-    if (DEBUG_LOG) {
+    if (DEBUG.actionGen) {
         console.log("ACTIONS_AFTER_GENERATION", actions.map(a => ({
             type: a.type,
             tile: (a as any).tile ? tileToString((a as any).tile) : null,
@@ -577,7 +593,7 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         }
         keySet.add(key);
     }
-    if (DEBUG_LOG) {
+    if (DEBUG.actionGen) {
         const tileKinds = new Set<number>();
         for (const a of actions) {
             if (a.type !== 'discard') continue;
@@ -588,8 +604,8 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
     }
 
 
-    if (DEBUG_LOG) console.log("TOTAL_ACTION_COUNT", actions.length);
+    if (DEBUG.actionGen) console.log("TOTAL_ACTION_COUNT", actions.length);
     if (hand.includes(TILES.z4 as any)) actions.push({ type: 'kita' });
-    if (DEBUG_LOG) console.log("ACTION_GEN_EXIT_COUNT", actions.length);
+    if (DEBUG.actionGen) console.log("ACTION_GEN_EXIT_COUNT", actions.length);
     return actions;
 }

@@ -1,23 +1,23 @@
-import { TILES, toNormalFive, isRedFive, tileToString } from '../core/tile';
+import { TILES, toNormalFive, isRedFive, tileToString, toSanmaTile as toSanmaTileCore, toStandardTile as toStandardTileCore } from '../core/tile';
 export { TILES };
+export const toSanmaTile = toSanmaTileCore;
+export const toStandardTile = toStandardTileCore;
 import type { Tile } from '../core/tile';
 import { calculateShanten27, getAgariPatterns, getShantenBreakdown27 } from '../core/shanten';
 export { getShantenBreakdown27 };
-import { toSanmaTile, toStandardTile } from '../core/sanmaTiles';
 import type { Mentsu, HandStructure } from '../core/shanten';
 import { calculateScore } from '../core/yaku';
 import type { GameState, YakuResult } from '../core/yaku';
 import { calculatePoints } from '../core/score';
 import type { ScoreResult } from '../core/score';
 
-const DEBUG_LOG = false;
-
 export const ENABLE_STATE_CACHE = false;
 
-export const DEBUG_LOGS = {
-    drawTile: false,
+export const DEBUG = {
+    actionGen: false,
     ukeire: false,
-    wallCounts: false
+    wall: false,
+    performance: true
 };
 
 // =========================================================
@@ -32,24 +32,29 @@ const SHANTEN_SCORE_TABLE = [
 ];
 const SHANTEN_MULTIPLIER = [2.7, 1.8, 1.3, 1.0, 1.0];
 
-/**
- * Tile Count System (29 Types)
- */
+// =========================================================
+// Tile Count System (29 Types)
+// =========================================================
 export const TILE_TYPES: Tile[] = [
     TILES.m1, TILES.m9,
-    TILES.p1, TILES.p2, TILES.p3, TILES.p4, TILES.p5, TILES.p5r, TILES.p6, TILES.p7, TILES.p8, TILES.p9,
-    TILES.s1, TILES.s2, TILES.s3, TILES.s4, TILES.s5, TILES.s5r, TILES.s6, TILES.s7, TILES.s8, TILES.s9,
-    TILES.z1, TILES.z2, TILES.z3, TILES.z4, TILES.z5, TILES.z6, TILES.z7
+    TILES.p1, TILES.p2, TILES.p3, TILES.p4, TILES.p5, TILES.p6, TILES.p7, TILES.p8, TILES.p9,
+    TILES.s1, TILES.s2, TILES.s3, TILES.s4, TILES.s5, TILES.s6, TILES.s7, TILES.s8, TILES.s9,
+    TILES.z1, TILES.z2, TILES.z3, TILES.z4, TILES.z5, TILES.z6, TILES.z7,
+    TILES.p5r, TILES.s5r
 ];
 
 export function getInitialCounts(): Int8Array {
-    const counts = new Int8Array(29).fill(4);
-    // Pinzu: Normal 5p is 3, Red 5p is 1
-    counts[TILE_TYPES.indexOf(TILES.p5)] = 3;
-    counts[TILE_TYPES.indexOf(TILES.p5r)] = 1;
-    // Souzu: Normal 5s is 3, Red 5s is 1
-    counts[TILE_TYPES.indexOf(TILES.s5)] = 3;
-    counts[TILE_TYPES.indexOf(TILES.s5r)] = 1;
+    const counts = new Int8Array(TILE_TYPES.length);
+    for (let i = 0; i < TILE_TYPES.length; i++) {
+        const t = TILE_TYPES[i];
+        if (isRedFive(t)) {
+            counts[i] = 1;
+        } else if (toNormalFive(t) === t && (t === TILES.p5 || t === TILES.s5)) {
+            counts[i] = 3;
+        } else {
+            counts[i] = 4;
+        }
+    }
     return counts;
 }
 
@@ -371,7 +376,7 @@ export function scoreWinningHandFast(
     han += state.kitaCount;
 
     // ----- HAN_DEBUG (Phase73: 指示内容のログ追加) -----
-    if (DEBUG_LOG && han >= 8) {
+    if (DEBUG.ukeire && han >= 8) {
         console.log("HAN_DEBUG", {
             han,
             fu: hasPinfu ? 20 : calcFuFast(structure, state.winningTile ?? -1),
@@ -538,7 +543,8 @@ export type DiscardResult = {
     m2: number;
     ciLower: number;
     ciUpper: number;
-    effectiveTiles?: { tile: Tile; count: number }[];
+    effectiveTileTypes: number;
+    effectiveTileCount: number;
     lcb?: number;
     reachedDiff: boolean;
     totalAgariTurnSum: number;
@@ -678,18 +684,28 @@ export function resetDebugCounters() {
 }
 
 // Phase 76: Wall Pool (壁の事前生成)
-export const WALL_POOL_SIZE = 512;
+export const WALL_POOL_SIZE = 2048;
 export let wallPool: Uint8Array[] = [];
+export let reverseWallPool: Uint8Array[] = [];
 
 /**
  * テンプレートを 512 回シャッフルして Wall Pool を生成する。
  */
 export function initWallPool(template: Uint8Array) {
     wallPool.length = 0;
+    reverseWallPool.length = 0;
     for (let i = 0; i < WALL_POOL_SIZE; i++) {
         const w = new Uint8Array(template);
         shuffleInPlace(w, w.length);
         wallPool.push(w);
+        
+        // Antithetic Sampling 用に反転させた壁も事前生成しておく
+        const rw = new Uint8Array(w).reverse();
+        reverseWallPool.push(rw);
+    }
+    if (DEBUG.performance) {
+        console.log("WallPool size:", wallPool.length);
+        console.log("ReverseWallPool size:", reverseWallPool.length);
     }
 }
 
@@ -1089,7 +1105,7 @@ export function findBestDiscard27(
                         effectiveTiles.push(toNormalFive(tile29));
                     }
                 }
-                if (DEBUG_LOGS.ukeire && effectiveTiles.length > 0) {
+                if (DEBUG.ukeire && effectiveTiles.length > 0) {
                     console.log("DEBUG_UKEIRE", {
                         shanten: s,
                         ukeireTiles: effectiveTiles.map(tileToString)
@@ -1172,22 +1188,37 @@ export function getUkeireCount27(
     fixedMentsuCount: number,
     invisibleCounts29: Int8Array | number[]
 ): number {
-    let total = 0;
+    return getUkeireInfo27(hand27, fixedMentsuCount, invisibleCounts29).tileCount;
+}
+
+/**
+ * Calculates ukeire (shanten-improving tiles) info: kinds and total count.
+ */
+export function getUkeireInfo27(
+    hand27: Int8Array | Int32Array | number[],
+    fixedMentsuCount: number,
+    invisibleCounts27: Int8Array | number[]
+): { typeCount: number; tileCount: number } {
+    let typeCount = 0;
+    let tileCount = 0;
     const currentShanten = getShantenMemoized(hand27 as any, fixedMentsuCount);
+
+    if (currentShanten === -1) return { typeCount: 0, tileCount: 0 };
 
     // We only check tiles 0-26 (Sanma tiles)
     for (let t = 0; t < 27; t++) {
-        const count = invisibleCounts29[t];
+        const count = invisibleCounts27[t];
         if (count <= 0) continue;
 
         hand27[t]++;
         const nextShanten = calculateShantenCached(hand27, fixedMentsuCount);
         if (nextShanten < currentShanten) {
-            total += count;
+            typeCount++;
+            tileCount += count;
         }
         hand27[t]--;
     }
-    return total;
+    return { typeCount, tileCount };
 }
 
 export function simpleHash(arr: Uint8Array, len: number): string {
@@ -1345,7 +1376,7 @@ export function runSinglePath(
                     if (sRep !== -1) hand27[sRep]++;
                     if (rTile === TILES.p5r) redP5++; else if (rTile === TILES.s5r) redS5++;
 
-                    if (DEBUG_LOGS.drawTile && debugTrialIndex < 2) {
+                    if (DEBUG.wall && debugTrialIndex < 2) {
                         console.log("DEBUG_KITA_REPLACEMENT", {
                             replacementTile: tileToString(rTile),
                             wallLengthAfterReplacement: liveWallLimit - mountainPtr
@@ -1379,14 +1410,14 @@ export function runSinglePath(
 
             if (!drawn) break;
 
-            if (DEBUG_LOGS.drawTile && debugTrialIndex < 2) {
+            if (DEBUG.wall && debugTrialIndex < 2) {
                 console.log("DEBUG_DRAW_METHOD", {
                     wallLengthBefore: liveWallLimit - (mountainPtr - 3), // 3 bytes were advanced, so before is +3 tiles remaining effectively per tile index
                     drawTile: tileToString(drawn)
                 });
             }
 
-            if (DEBUG_LOGS.drawTile && debugTrialIndex < 2) {
+            if (DEBUG.wall && debugTrialIndex < 2) {
                 console.log("DEBUG_WALL_AFTER_DRAW", {
                     wallLengthAfter: liveWallLimit - mountainPtr
                 });
@@ -1440,7 +1471,7 @@ export function runSinglePath(
                 let fastPoints = 0;
                 let bestInfo = { score: 0, han: 0, fu: 0, pinfu: false };
 
-                if (DEBUG_LOG) {
+                if (DEBUG.ukeire) {
                     console.log("agariPatterns", patterns.length);
                 }
 
@@ -1453,7 +1484,7 @@ export function runSinglePath(
                 }
 
                 // Final detailed log for the best matched pattern
-                if (DEBUG_LOG) {
+                if (DEBUG.ukeire) {
                     console.log({
                         han: bestInfo.han,
                         fu: bestInfo.fu,
@@ -1580,7 +1611,7 @@ export function runSinglePath(
                         }
                     }
 
-                    if (DEBUG_LOG && (currentTurn + pathTurnCount) % 50 === 0) {
+                    if (DEBUG.wall && (currentTurn + pathTurnCount) % 50 === 0) {
                         console.log("Riichi Decision", {
                             initialShanten,
                             wasInitialTenpai,
@@ -1654,7 +1685,7 @@ export function evaluateWinningHand(
     // Sort by TOTAL SCORE (descending) to maximize points
     const sorted = [...evaluated].sort((a, b) => b.score.total - a.score.total);
 
-    if (DEBUG_LOG && sorted.length > 0) {
+    if (DEBUG.ukeire && sorted.length > 0) {
         const best = sorted[0];
         console.log("--- Agari Evaluation Debug ---");
         console.log({

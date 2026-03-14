@@ -9,12 +9,13 @@
 
 export const SANMA_TILE_COUNT = 27;
 
-// Mapping array: index = 34-ID, value = 27-ID (-1 if invalid)
+// Mapping array: index = ID (0-35), value = 27-ID (-1 if invalid)
 const TO_SANMA_MAP = [
     0, -1, -1, -1, -1, -1, -1, -1, 1, // 0-8: 1m..9m (Only 1m, 9m valid)
     2, 3, 4, 5, 6, 7, 8, 9, 10,       // 9-17: 1p..9p
     11, 12, 13, 14, 15, 16, 17, 18, 19, // 18-26: 1s..9s
-    20, 21, 22, 23, 24, 25, 26        // 27-33: 1z..7z
+    20, 21, 22, 23, 24, 25, 26,       // 27-33: 1z..7z
+    6, 15                             // 34-35: 5pr, 5sr -> Map to p5(6), s5(15)
 ];
 
 // Inverse mapping: index = 27-ID, value = 34-ID
@@ -26,8 +27,8 @@ const TO_STANDARD_MAP = [
 ];
 
 export function toSanmaTile(t34: number): number {
-    if (t34 < 0 || t34 >= 34) return -1;
-    return TO_SANMA_MAP[t34];
+    if (t34 < 0 || t34 > 35) return -1;
+    return TO_SANMA_MAP[t34] ?? -1;
 }
 
 export function toStandardTile(t27: number): number {
