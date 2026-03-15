@@ -246,6 +246,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         variance: 0,
         eliminated: false,
         winCount: 0,
+        sumWinPoint: 0,
         totalPoints: 0,
         tenpaiCount: 0,
         totalAgariTurnSum: 0,
@@ -284,6 +285,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.sumEV2 = 0;
         node.meanEV = 0;
         node.winCount = 0;
+        node.sumWinPoint = 0;
         node.totalPoints = 0;
         node.tenpaiCount = 0;
         node.totalAgariTurnSum = 0;
@@ -294,9 +296,14 @@ export function runBatchSimulations(config: SimulationConfig) {
         const point = res.point;
         node.sumEV += point;
         node.sumEV2 += point * point;
-        if (point > 0) {
+        if (res.win) {
             node.winCount++;
+        }
+        if (point > 0) {
             node.totalPoints += point;
+        }
+        if (res.win && res.score !== undefined && res.score > 0) {
+            node.sumWinPoint += res.score;
         }
         node.totalAgariTurnSum += res.totalAgariTurnSum;
         node.agariCount += res.agariCount;
@@ -559,6 +566,7 @@ export function runBatchSimulations(config: SimulationConfig) {
             trialCount: actualTrials,
             winRate: actualTrials > 0 ? winCount / actualTrials : 0,
             avgScore: winCount > 0 ? node.totalPoints / winCount : 0,
+            avgWinPoint: winCount > 0 ? Math.round(node.sumWinPoint / winCount) : 0,
             tenpaiRate: finalTenpaiRate,
             shantenBefore: initialShanten,
             shantenAfter: shantenAfterDiscard,

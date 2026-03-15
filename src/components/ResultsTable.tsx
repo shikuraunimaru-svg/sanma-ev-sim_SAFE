@@ -95,7 +95,7 @@ export function ResultsTable({ results }: Props) {
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
-                                    {Math.round(res.avgScore).toLocaleString()}
+                                    {res.avgWinPoint?.toLocaleString() ?? 0}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
                                     {(res.tenpaiRate * 100).toFixed(1)}%

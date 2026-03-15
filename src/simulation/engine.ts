@@ -585,6 +585,7 @@ export type DiscardResult = {
     totalWinPoints: number;
     wins: number;
     tenpaiCount: number;
+    avgWinPoint?: number;
     layerA_totalScore: number;
     layerB_totalScore: number;
     layerA_trials: number;
@@ -1893,6 +1894,7 @@ export interface Candidate {
     eliminated: boolean;
     // For final results sync
     winCount: number;
+    sumWinPoint: number;
     tenpaiCount: number;
     totalPoints: number;
     totalAgariTurnSum: number;
