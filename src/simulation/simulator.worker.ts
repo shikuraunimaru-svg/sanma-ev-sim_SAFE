@@ -2,7 +2,7 @@ import { toNormalFive, TILES, tileToString, isRedFive } from '../core/tile';
 import type { Tile } from '../core/tile';
 import { toSanmaTile } from '../core/sanmaTiles';
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, reverseWallPool, initWallPool, DEBUG, getUkeireInfo27 } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, reverseWallPool, swappedWallPool, swappedReverseWallPool, initWallPool, DEBUG, getUkeireInfo27, swapSimulationConfig, swapTileArray, swapAction, swapPinSou } = Engine;
 type Candidate = Engine.Candidate;
 // fullEvalCount は Engine モジュール変数として直接参照 (Engine.fullEvalCount)
 
@@ -259,6 +259,19 @@ export function runBatchSimulations(config: SimulationConfig) {
     const workUraCounts = new Int8Array(29);
 
     // ==========================================
+    // Phase 77: Prepare Symmetric Simulation Config
+    // ==========================================
+    const swappedConfig = swapSimulationConfig(config);
+    const swappedTemplateCounts = new Int8Array(29);
+    for (let i = 0; i < 29; i++) {
+        const t = TILE_TYPES[i];
+        const st = swapPinSou(t);
+        const si = TILE_TYPES.indexOf(st);
+        if (si !== -1) swappedTemplateCounts[si] = templateCounts[i];
+    }
+    const swappedInitialShanten = initialShanten;
+
+    // ==========================================
     // Phase 1: UCB Search
     // ==========================================
     // allNodes の参照をそのまま使用し、フェーズをまたいで統計情報を共有する
@@ -297,12 +310,14 @@ export function runBatchSimulations(config: SimulationConfig) {
     // Phase 1: Batch CRN + Antithetic Search
     // ==========================================
     // 全候補に対し、同一の wall とその反転 (Antithetic) を用いて評価する
-    const batchWallSamples = Math.floor(TOTAL_INITIAL_STEPS / (ucbNodes.length * 2));
+    const batchWallSamples = Math.floor(TOTAL_INITIAL_STEPS / (ucbNodes.length * 4)); // symmetric simulation takes 4 trials per node per loop
     
     for (let w = 0; w < batchWallSamples; w++) {
         const wallIndex = w % wallPool.length;
         const wall = wallPool[wallIndex];
         const revWall = reverseWallPool[wallIndex];
+        const swappedWall = swappedWallPool[wallIndex];
+        const swappedRevWall = swappedReverseWallPool[wallIndex];
         
         // Antithetic 用の独立したシード
         const seed1 = w >>> 0;
@@ -310,6 +325,8 @@ export function runBatchSimulations(config: SimulationConfig) {
 
         for (const node of ucbNodes) {
             const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+            const swappedAfterHand = swapTileArray(afterHand);
+            const swappedActionDef = swapAction(node.action);
 
             // 試行1 (Normal)
             workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
@@ -333,6 +350,30 @@ export function runBatchSimulations(config: SimulationConfig) {
             );
             updateNodeStats(node, res2);
             if (res2.finalShanten <= 0) node.tenpaiCount++;
+            totalSimulationSteps++;
+
+            // 試行3 (Symmetric Normal)
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res3 = runSinglePath(
+                swappedAfterHand, swappedConfig.fixedMentsu, swappedActionDef, myKita, otherKita, swappedConfig.doraIndicators,
+                currentTurn, isDealer, swappedWall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                swappedTemplateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed1, swappedInitialShanten, 0, totalSimulationSteps
+            );
+            updateNodeStats(node, res3);
+            if (res3.finalShanten <= 0) node.tenpaiCount++;
+            totalSimulationSteps++;
+
+            // 試行4 (Symmetric Antithetic)
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res4 = runSinglePath(
+                swappedAfterHand, swappedConfig.fixedMentsu, swappedActionDef, myKita, otherKita, swappedConfig.doraIndicators,
+                currentTurn, isDealer, swappedRevWall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                swappedTemplateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed2, swappedInitialShanten, 0, totalSimulationSteps
+            );
+            updateNodeStats(node, res4);
+            if (res4.finalShanten <= 0) node.tenpaiCount++;
             totalSimulationSteps++;
         }
         
@@ -365,17 +406,21 @@ export function runBatchSimulations(config: SimulationConfig) {
     let racingTrials = 0;
     let racingStopReason = "MAX_TRIALS";
 
-    const racingWallSamples = Math.floor(RACING_MAX_TRIALS / (racingNodes.length * 2));
+    const racingWallSamples = Math.floor(RACING_MAX_TRIALS / (racingNodes.length * 4));
 
     for (let w = 0; w < racingWallSamples; w++) {
         const wallIndex = totalSimulationSteps % wallPool.length;
         const wall = wallPool[wallIndex];
         const revWall = reverseWallPool[wallIndex];
+        const swappedWall = swappedWallPool[wallIndex];
+        const swappedRevWall = swappedReverseWallPool[wallIndex];
         const seed1 = totalSimulationSteps >>> 0;
         const seed2 = (totalSimulationSteps >>> 0) ^ 0x9e3779b9;
 
         for (const node of racingNodes) {
             const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+            const swappedAfterHand = swapTileArray(afterHand);
+            const swappedActionDef = swapAction(node.action);
 
             // res1
             workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
@@ -399,8 +444,30 @@ export function runBatchSimulations(config: SimulationConfig) {
             updateNodeStats(node, res2);
             if (res2.finalShanten <= 0) node.tenpaiCount++;
 
-            totalSimulationSteps += 2;
-            racingTrials += 2;
+            // res3 (Symmetric Normal)
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res3 = runSinglePath(
+                swappedAfterHand, swappedConfig.fixedMentsu, swappedActionDef, myKita, otherKita, swappedConfig.doraIndicators,
+                currentTurn, isDealer, swappedWall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                swappedTemplateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed1, swappedInitialShanten, 0, totalSimulationSteps + 2
+            );
+            updateNodeStats(node, res3);
+            if (res3.finalShanten <= 0) node.tenpaiCount++;
+
+            // res4 (Symmetric Antithetic)
+            workTrialCounts.fill(0); workHand27.fill(0); workUraCounts.fill(0);
+            const res4 = runSinglePath(
+                swappedAfterHand, swappedConfig.fixedMentsu, swappedActionDef, myKita, otherKita, swappedConfig.doraIndicators,
+                currentTurn, isDealer, swappedRevWall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                swappedTemplateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                seed2, swappedInitialShanten, 0, totalSimulationSteps + 3
+            );
+            updateNodeStats(node, res4);
+            if (res4.finalShanten <= 0) node.tenpaiCount++;
+
+            totalSimulationSteps += 4;
+            racingTrials += 4;
         }
     }
 
@@ -443,16 +510,31 @@ export function runBatchSimulations(config: SimulationConfig) {
         const visits = node.visits || 0;
         const winCount = node.winCount || 0;
 
-        const handAfter = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
+        let handAfter: Tile[];
+        let effectiveFixedMentsuCount = fixedMentsu.length;
+        if (node.action.type === 'discard') {
+            handAfter = removeOneTile(myHand, (node.action as any).tile);
+        } else if (node.action.type === 'ankan' || node.action.type === 'ankanRiichi') {
+            handAfter = [...myHand];
+            const ankanNormalId = toNormalFive((node.action as any).tile);
+            for (let i = 0; i < 4; i++) {
+                const idx = handAfter.findIndex(t => toNormalFive(t) === ankanNormalId);
+                if (idx !== -1) handAfter.splice(idx, 1);
+            }
+            effectiveFixedMentsuCount++; // Ankan adds a mentsu block natively to the shanten calculation
+        } else {
+            handAfter = myHand;
+        }
+
         const hand27 = new Int8Array(27);
         for (const t of handAfter) {
             const s = toSanmaTile(t);
             if (s !== -1) hand27[s]++;
         }
-        const ukeire = getUkeireInfo27(hand27, fixedMentsu.length, ukeireCounts27);
+        const ukeire = getUkeireInfo27(hand27, effectiveFixedMentsuCount, ukeireCounts27);
 
         const actualTrials = visits > 1 ? visits - 1 : visits; // Adjust for visits=1 initialization
-        const shantenAfterDiscard = calculateShanten(handAfter, fixedMentsu.length);
+        const shantenAfterDiscard = calculateShanten(handAfter, effectiveFixedMentsuCount);
         const tenpaiRateVal = actualTrials > 0 ? node.tenpaiCount / actualTrials : 0;
         const finalTenpaiRate = (shantenAfterDiscard === 0) ? 1.0 : tenpaiRateVal;
 

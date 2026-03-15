@@ -180,6 +180,7 @@ export function scoreWinningHandFast(
     structure: HandStructure,
     state: GameState
 ): { score: number; han: number; fu: number; pinfu: boolean } {
+    scoreFastCalls++;
     const isMenzen = !structure.mentsu.some(m => m.isOpen);
     const s = structure;
 
@@ -450,6 +451,54 @@ export type SimulationConfig = {
     validationMode?: boolean;
 };
 
+// =========================================================
+// Phase 77: Pinzu/Souzu Symmetry Transformation
+// =========================================================
+
+export function swapPinSou(tile: Tile): Tile {
+    if (tile >= 9 && tile <= 17) return (tile + 9) as Tile;   // 1p-9p (9-17) -> 1s-9s (18-26)
+    if (tile >= 18 && tile <= 26) return (tile - 9) as Tile;  // 1s-9s (18-26) -> 1p-9p (9-17)
+    if (tile === TILES.p5r) return TILES.s5r as Tile;         // red 5p (34) -> red 5s (35)
+    if (tile === TILES.s5r) return TILES.p5r as Tile;         // red 5s (35) -> red 5p (34)
+    return tile;                                              // m, z remain unchanged
+}
+
+export function swapTileArray(arr: Tile[]): Tile[] {
+    return arr.map(swapPinSou);
+}
+
+export function swapSimulationConfig(config: SimulationConfig): SimulationConfig {
+    return {
+        ...config,
+        myHand: swapTileArray(config.myHand || []),
+        fixedMentsu: (config.fixedMentsu || []).map(m => ({
+            ...m,
+            tile: swapPinSou(m.tile),
+            tiles: swapTileArray(m.tiles)
+        })),
+        otherOpenMelds: config.otherOpenMelds ? config.otherOpenMelds.map(m => ({
+            ...m,
+            tile: swapPinSou(m.tile),
+            tiles: swapTileArray(m.tiles)
+        })) : undefined,
+        myDiscards: swapTileArray(config.myDiscards || []),
+        doraIndicators: swapTileArray(config.doraIndicators || [])
+    };
+}
+
+export function swapAction(action: Action): Action {
+    switch (action.type) {
+        case 'discard':
+            return { ...action, tile: swapPinSou(action.tile) };
+        case 'ankan':
+        case 'ankanRiichi':
+        case 'kakan':
+            return { ...action, tile: swapPinSou(action.tile) };
+        default:
+            return { ...action };
+    }
+}
+
 
 export type SimulationSummary = {
     remainingTiles: number;
@@ -693,12 +742,19 @@ export const WALL_POOL_SIZE = 2048;
 export let wallPool: Uint8Array[] = [];
 export let reverseWallPool: Uint8Array[] = [];
 
+// Phase 77: Swapped Wall Pool (対称シミュレーション用事前生成)
+export let swappedWallPool: Uint8Array[] = [];
+export let swappedReverseWallPool: Uint8Array[] = [];
+
 /**
  * テンプレートを 512 回シャッフルして Wall Pool を生成する。
  */
 export function initWallPool(template: Uint8Array) {
     wallPool.length = 0;
     reverseWallPool.length = 0;
+    swappedWallPool.length = 0;
+    swappedReverseWallPool.length = 0;
+    
     for (let i = 0; i < WALL_POOL_SIZE; i++) {
         const w = new Uint8Array(template);
         shuffleInPlace(w, w.length);
@@ -707,6 +763,19 @@ export function initWallPool(template: Uint8Array) {
         // Antithetic Sampling 用に反転させた壁も事前生成しておく
         const rw = new Uint8Array(w).reverse();
         reverseWallPool.push(rw);
+
+        // Symmetric Simulation 用の壁を生成
+        const sw = new Uint8Array(w.length);
+        for (let j = 0; j < w.length; j++) {
+            sw[j] = swapPinSou(w[j]);
+        }
+        swappedWallPool.push(sw);
+
+        const srw = new Uint8Array(rw.length);
+        for (let j = 0; j < rw.length; j++) {
+            srw[j] = swapPinSou(rw[j]);
+        }
+        swappedReverseWallPool.push(srw);
     }
     if (DEBUG.performance) {
         console.log("WallPool size:", wallPool.length);
@@ -1460,6 +1529,7 @@ export function runSinglePath(
                 if (rinshanTile) {
                     if (DEBUG.performance && debugTrialIndex < 3) console.log("RINSHAN_DRAW", rinshanTile);
                     // Win Check on Rinshan
+                    agariCalls++;
                     const pRinshan = getAgariPatterns(reconstructHand(), currentMentsu);
                     if (pRinshan.length > 0) {
                         const state: GameState = {
@@ -1541,6 +1611,7 @@ export function runSinglePath(
         } else if (action.type === 'tsumo') {
             // Check win immediately
             const currentHand = reconstructHand();
+            agariCalls++;
             const patterns = getAgariPatterns(currentHand, currentMentsu);
             if (patterns.length > 0) {
                 const state: GameState = {
@@ -1595,6 +1666,7 @@ export function runSinglePath(
             if (drawn === TILES.p5r) redP5++; else if (drawn === TILES.s5r) redS5++;
             if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) isHaitei = true;
             const currentHand = reconstructHand();
+            agariCalls++;
             const patterns = getAgariPatterns(currentHand, currentMentsu);
             if (patterns.length > 0) {
                 const state: GameState = {
@@ -1653,6 +1725,7 @@ export function runSinglePath(
                     let chooseRiichi = true;
                     if (!wasInitialTenpai) {
                         const currentHandAfterDiscard = reconstructHand();
+                        agariCalls++;
                         const patterns = getAgariPatterns(currentHandAfterDiscard, currentMentsu);
                         let totalHan = 0; let totalScore = 0; let maxFu = 0;
                         if (patterns.length > 0) {
@@ -1734,6 +1807,7 @@ export function evaluateWinningHand(
         discardCount: config.myDiscards.length
     };
 
+    agariCalls++;
     const patterns = getAgariPatterns(hand, config.fixedMentsu || []);
     if (patterns.length === 0) return null;
 
