@@ -61,6 +61,19 @@ export default function App() {
       console.log("Main thread received:", e.data);
       const { type, results: data, winResult: winData, summary, csvReport: report } = e.data;
       if (type === 'RESULT' && data) {
+        console.log("RESULT_ACTIONS_START");
+        data.forEach((r: any, i: number) => {
+          console.log("RESULT", i, {
+            actionType: r.action?.type,
+            tile: r.action?.tile,
+            actionRaw: r.action,
+            winRate: r.winRate,
+            ev: r.ev,
+            trials: r.trialCount
+          });
+        });
+        console.log("RESULT_ACTIONS_END");
+
         console.log("MAIN_THREAD_RESULT_SAMPLE", data[0]);
         setResults(data);
         if (summary && summary.totalTimeMs !== undefined) {
@@ -245,6 +258,7 @@ export default function App() {
               fixedMentsu={fixedMentsu}
               doraIndicators={doraIndicators}
               kitaCount={myKita}
+              otherKitaCount={otherKita}
               executionTurn={currentTurn}
               summary={simulationSummary}
             />

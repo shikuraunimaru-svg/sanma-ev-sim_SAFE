@@ -17,7 +17,8 @@ export const DEBUG = {
     actionGen: false,
     ukeire: false,
     wall: false,
-    performance: true
+    performance: true,
+    tenpai: false
 };
 
 // =========================================================
@@ -427,7 +428,8 @@ export type Action =
         riichi: boolean,
     }
     | { type: 'kita' }
-    | { type: 'ankan', tile: Tile, riichi?: boolean }
+    | { type: 'ankan', tile: Tile }
+    | { type: 'ankanRiichi', tile: Tile }
     | { type: 'kakan', tile: Tile }
     | { type: 'tsumo' };
 
@@ -503,7 +505,7 @@ export function createSummary(config: SimulationConfig, remainingTiles: number, 
         if (s !== -1) hand27[s]++;
     }
     const b = getShantenBreakdown27(Array.from(hand27), config.fixedMentsu.length);
-    const displayRemainingTiles = Math.max(0, remainingTiles - 26);
+    const displayRemainingTiles = Math.max(0, remainingTiles);
     return {
         remainingTiles,
         displayRemainingTiles,
@@ -562,6 +564,9 @@ export type SimulationPathResult = {
     totalAgariTurnSum: number;
     agariCount: number;
     engineLiveWallLimit: number;
+    win?: boolean;
+    score?: number;
+    endReason?: string;
 };
 
 export let fullEvalCount = 0; // Phase71: win 判定（patterns.length > 0）カウンタ
@@ -1010,7 +1015,7 @@ export function findBestDiscard27(
     }
 
     // If tenpaiDepth >= 2, we are in a re-tenpai situation where we must not drop shanten back to 1.
-    const currentShanten = getShantenMemoized(hand27 as any, fixedMentsuCount);
+    const currentShanten = calculateShantenCached(hand27 as any, fixedMentsuCount);
     const forceMaintainTenpai = (tenpaiDepth >= 2 && currentShanten === 0);
 
     // Pre-calculate sanmaRemaining derived from invisibleCounts29 to handle red fives correctly
@@ -1166,17 +1171,29 @@ export function findBestDiscard27(
     const TOP_K = 3;
     const r = rng ? rng.next() : Math.random();
 
+    // ユーザー要求の安全ガードの意図を汲み、選出される candidates に undefined 対策
+    if (!candidates || candidates.length === 0) return -1;
+
+    // 追加の安全策: 有効な candidate のみをフィルタ
+    const validCandidates = candidates.filter(c => c !== undefined && c.tile !== undefined);
+    if (validCandidates.length === 0) return -1;
+    
     if (r < EPSILON) {
         // トップ K 個からランダム選択
-        const k = Math.min(TOP_K, candidates.length);
+        const k = Math.min(TOP_K, validCandidates.length);
         const randomChoice = rng ? rng.next() : Math.random();
-        return candidates[Math.floor(randomChoice * k)].tile;
+        const chosen = validCandidates[Math.floor(randomChoice * k)];
+        if (!chosen || chosen.tile === undefined) return -1;
+        return chosen.tile;
     } else {
         // 通常の貪欲法 (同スコアの場合はランダム)
-        const bestScore = candidates[0].score;
-        const bests = candidates.filter(c => c.score === bestScore);
+        const bestScore = validCandidates[0].score;
+        const bests = validCandidates.filter(c => c && c.score === bestScore);
+        if (bests.length === 0) return validCandidates[0].tile;
         const randomChoice = rng ? rng.next() : Math.random();
-        return bests[Math.floor(randomChoice * bests.length)].tile;
+        const chosen = bests[Math.floor(randomChoice * bests.length)];
+        if (!chosen || chosen.tile === undefined) return -1;
+        return chosen.tile;
     }
 }
 
@@ -1265,7 +1282,7 @@ export function runSinglePath(
     localFixedMentsuArr: Mentsu[],
     initialAction: Action,
     myKita: number,
-    otherKita: number, // Removed underscore
+    otherKita: number,
     doraIndicators: Tile[],
     currentTurn: number,
     isDealer: boolean,
@@ -1313,18 +1330,57 @@ export function runSinglePath(
 
     // Internalized path executor
     const executePath = (): SimulationPathResult => {
-        // --- 1. State Reset ---
+        if (DEBUG.performance && debugTrialIndex < 3) {
+            console.log("ACTION_TYPE", initialAction.type);
+            console.log("EXECUTE_PATH_CALLED", { 
+                actionType: initialAction.type,
+                tile: (initialAction as any).tile ? tileToString((initialAction as any).tile) : 'none'
+            });
+        }
+        
+        if (initialAction.type === 'discard') {
+            return executeDiscardPath(initialAction);
+        } else if (initialAction.type === 'ankan') {
+            return executeAnkanPath(initialAction);
+        } else if (initialAction.type === 'ankanRiichi') {
+            return executeAnkanPath(initialAction);
+        } else if (initialAction.type === 'kita') {
+            return executeKitaPath();
+        } else if (initialAction.type === 'tsumo') {
+            return executeTsumoPath();
+        }
+        
+        return {
+            type: 'draw', point: 0, isTenpai: false, finalShanten: 99,
+            initialRemainingTiles: liveWallLimit, totalAgariTurnSum: 0, agariCount: 0,
+            engineLiveWallLimit: liveWallLimit
+        };
+    };
+
+    const executeDiscardPath = (action: Action & { type: 'discard' }): SimulationPathResult => {
+        return runSimulationLoop(action);
+    };
+
+    const executeAnkanPath = (action: Action & ({ type: 'ankan' } | { type: 'ankanRiichi'})): SimulationPathResult => {
+        return runSimulationLoop(action);
+    };
+
+    const executeKitaPath = (): SimulationPathResult => {
+        return runSimulationLoop({ type: 'kita' });
+    };
+
+    const executeTsumoPath = (): SimulationPathResult => {
+        return runSimulationLoop({ type: 'tsumo' });
+    };
+
+    const runSimulationLoop = (action: Action): SimulationPathResult => {
         const hand27 = workHand27;
         const trialCounts = workTrialCounts;
-
         for (let i = 0; i < 27; i++) hand27[i] = 0;
         for (const t of initialHand) {
             const sTile = toSanmaTile(toNormalFive(t));
             if (sTile !== -1) hand27[sTile]++;
         }
-
-        // 削除: DEBUG_SIM_ACTION のブロック
-
         for (let i = 0; i < 29; i++) trialCounts[i] = templateCounts[i];
 
         let redP5 = 0; let redS5 = 0;
@@ -1337,11 +1393,13 @@ export function runSinglePath(
         let selfDrawCount = 0;
         const selfDrawQuota = Math.floor(Math.max(0, liveWallLimit - 26) / 3);
         let nukidoraCount = myKita;
-        let isRiichi = (initialAction.type === 'discard' && initialAction.riichi) || (initialAction.type === 'ankan' && initialAction.riichi) || false;
+        let isRiichi = (action.type === 'discard' && action.riichi) || action.type === 'ankanRiichi';
         let isIppatsu = isRiichi;
         let isHaitei = false;
         let pathTurnCount = 0;
         let scoreAdjustment = isRiichi ? -1000 : 0;
+        const currentDoraInds = [...doraIndicators];
+        const currentMentsu = [...localFixedMentsuArr];
         const wasInitialTenpai = (initialShanten === 0);
 
         const reconstructHand = (): Tile[] => {
@@ -1358,11 +1416,113 @@ export function runSinglePath(
             }
             return res;
         };
+        const getCurrentDoraCount = () => countDora(reconstructHand(), currentDoraInds, currentMentsu, nukidoraCount);
 
-        const getCurrentDoraCount = () => countDora(reconstructHand(), doraIndicators, localFixedMentsuArr, nukidoraCount);
+        // --- 3. Simulation Loop Setup ---
+        let simLoopSafety = 0;
+        let depth = 0;
 
-        // --- 2. Initial Kita Handling ---
-        if (initialAction.type === 'kita') {
+        // --- Initial Action Handling ---
+        if (action.type === 'ankanRiichi') {
+            if (DEBUG.performance && debugTrialIndex < 3) console.log("ANKAN_RIICHI_START");
+        }
+        if (action.type === 'ankan' || action.type === 'ankanRiichi') {
+            if (DEBUG.performance && debugTrialIndex < 3) console.log("ANKAN_PATH_START", action.tile);
+            const sAnkan = toSanmaTile(toNormalFive(action.tile));
+            if (sAnkan !== -1 && hand27[sAnkan] >= 4) {
+                hand27[sAnkan] -= 4;
+                currentMentsu.push({
+                    type: 'kantsu' as any,
+                    tile: toNormalFive(action.tile),
+                    tiles: [toNormalFive(action.tile), toNormalFive(action.tile), toNormalFive(action.tile), toNormalFive(action.tile)],
+                    isOpen: false,
+                    isKan: true
+                } as any);
+                if (mountainPtr < liveWallLimit) {
+                    const dIdx = mountain[mountainPtr++];
+                    trialCounts[dIdx]--;
+                    currentDoraInds.push(TILE_TYPES[dIdx]);
+                }
+                // Rinshan Draw
+                let rinshanTile: Tile | null = null;
+                while (mountainPtr < liveWallLimit) {
+                    const rIdx = mountain[mountainPtr++];
+                    trialCounts[rIdx]--;
+                    const rTile = TILE_TYPES[rIdx];
+                    if (rTile === TILES.z4) { nukidoraCount++; continue; }
+                    const sRep = toSanmaTile(toNormalFive(rTile));
+                    if (sRep !== -1) hand27[sRep]++;
+                    if (rTile === TILES.p5r) redP5++; else if (rTile === TILES.s5r) redS5++;
+                    rinshanTile = rTile;
+                    break;
+                }
+
+                if (rinshanTile) {
+                    if (DEBUG.performance && debugTrialIndex < 3) console.log("RINSHAN_DRAW", rinshanTile);
+                    // Win Check on Rinshan
+                    const pRinshan = getAgariPatterns(reconstructHand(), currentMentsu);
+                    if (pRinshan.length > 0) {
+                        const state: GameState = {
+                            bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
+                            isRiichi, isDoubleRiichi: false, isIppatsu, isTsumo: true,
+                            isRinshan: true, isChankan: false, isHaitei, isHoutei: false,
+                            kitaCount: nukidoraCount, doraCount: getCurrentDoraCount(), uraDoraCount: 0,
+                            winningTile: rinshanTile, isDealer, turnCount: currentTurn,
+                            hasCallOccurred: currentMentsu.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
+                            discardCount: 0
+                        };
+                        if (isRiichi) {
+                            let tempPool = 0; for (let n = 0; n < 29; n++) tempPool += trialCounts[n];
+                            const tempCounts = workUraCounts; for (let n = 0; n < 29; n++) tempCounts[n] = trialCounts[n];
+                            let udc = 0;
+                            for (let d = 0; d < currentDoraInds.length; d++) {
+                                if (tempPool <= 0) break;
+                                let r = Math.floor(rng.next() * tempPool);
+                                for (let j = 0; j < 29; j++) {
+                                    if (r < tempCounts[j]) {
+                                        const val = getDoraValue(TILE_TYPES[j]);
+                                        for (let k = 0; k < 27; k++) if (toStandardTile(k) === val) udc += hand27[k];
+                                        for (const m of currentMentsu) for (const t of m.tiles) if (toNormalFive(t) === val) udc++;
+                                        tempCounts[j]--; tempPool--; break;
+                                    }
+                                    r -= tempCounts[j];
+                                }
+                            }
+                            state.uraDoraCount = udc;
+                        }
+                        let fastPoints = 0;
+                        for (const p of pRinshan) {
+                            const info = scoreWinningHandFast(reconstructHand(), p, state);
+                            if (info.score > fastPoints) fastPoints = info.score;
+                        }
+                        if (fastPoints > 0) {
+                            if (DEBUG.performance && debugTrialIndex < 3) console.log("WIN_DETECTED", fastPoints);
+                            return {
+                                type: 'win', point: fastPoints + scoreAdjustment, isTenpai: true,
+                                finalShanten: -1, initialRemainingTiles: initialTotalForSummary,
+                                totalAgariTurnSum: currentTurn, agariCount: 1, engineLiveWallLimit: liveWallLimit,
+                                win: true, score: fastPoints, endReason: 'win'
+                            };
+                        }
+                    }
+
+                    // 5. 嶺上ツモ後は必ず1枚切る (修正要求に対応)
+                    // 暗槓リーチの場合はテンパイ崩しを防止するため depth=2 相当で縛る
+                    const effectiveTenpaiDepth = action.type === 'ankanRiichi' ? 2 : tenpaiDepth;
+                    const discardTile27 = findBestDiscard27(hand27, currentMentsu.length, trialCounts, currentDoraInds, rng, effectiveTenpaiDepth, depth, currentTurn, debugTrialIndex);
+                    if (discardTile27 !== -1) {
+                        hand27[discardTile27]--;
+                        const t34 = toStandardTile(discardTile27);
+                        if (t34 === TILES.p5 && redP5 > 0 && hand27[discardTile27] < redP5) redP5--;
+                        else if (t34 === TILES.s5 && redS5 > 0 && hand27[discardTile27] < redS5) redS5--;
+                    }
+                }
+
+                if (DEBUG.performance && debugTrialIndex < 3) {
+                    console.log("HAND_AFTER_ANKAN", reconstructHand().map(tileToString));
+                }
+            }
+        } else if (action.type === 'kita') {
             const sNorth = toSanmaTile(toNormalFive(TILES.z4));
             if (sNorth !== -1 && hand27[sNorth] > 0) {
                 hand27[sNorth]--;
@@ -1375,26 +1535,45 @@ export function runSinglePath(
                     const sRep = toSanmaTile(toNormalFive(rTile));
                     if (sRep !== -1) hand27[sRep]++;
                     if (rTile === TILES.p5r) redP5++; else if (rTile === TILES.s5r) redS5++;
-
-                    if (DEBUG.wall && debugTrialIndex < 2) {
-                        console.log("DEBUG_KITA_REPLACEMENT", {
-                            replacementTile: tileToString(rTile),
-                            wallLengthAfterReplacement: liveWallLimit - mountainPtr
-                        });
-                    }
                     break;
+                }
+            }
+        } else if (action.type === 'tsumo') {
+            // Check win immediately
+            const currentHand = reconstructHand();
+            const patterns = getAgariPatterns(currentHand, currentMentsu);
+            if (patterns.length > 0) {
+                const state: GameState = {
+                    bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
+                    isRiichi, isDoubleRiichi: false, isIppatsu, isTsumo: true,
+                    isRinshan: false, isChankan: false, isHaitei, isHoutei: false,
+                    kitaCount: nukidoraCount, doraCount: getCurrentDoraCount(), uraDoraCount: 0,
+                    winningTile: initialHand[initialHand.length - 1], isDealer, turnCount: currentTurn,
+                    hasCallOccurred: currentMentsu.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
+                    discardCount: 0
+                };
+                let fastPoints = 0;
+                for (const p of patterns) {
+                    const info = scoreWinningHandFast(currentHand, p, state);
+                    if (info.score > fastPoints) fastPoints = info.score;
+                }
+                if (fastPoints > 0) {
+                    if (DEBUG.performance && debugTrialIndex < 3) console.log("WIN_DETECTED", fastPoints);
+                    return {
+                        type: 'win', point: fastPoints + scoreAdjustment, isTenpai: true,
+                        finalShanten: -1,
+                        initialRemainingTiles: initialTotalForSummary, totalAgariTurnSum: currentTurn,
+                        agariCount: 1, engineLiveWallLimit: liveWallLimit,
+                        win: true, score: fastPoints, endReason: 'win'
+                    };
                 }
             }
         }
 
-        // --- 3. Simulation Loop ---
-        let simLoopSafety = 0;
-        let depth = 0;
+        // --- Simulation Loop ---
         while (mountainPtr < liveWallLimit && selfDrawCount < selfDrawQuota) {
             simLoopSafety++; if (simLoopSafety > 1000) break;
             pathTurnCount++;
-
-            // My Draw
             let drawn: Tile | null = null;
             while (true) {
                 if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) break;
@@ -1407,58 +1586,38 @@ export function runSinglePath(
                 drawn = tile;
                 break;
             }
-
             if (!drawn) break;
-
-            if (DEBUG.wall && debugTrialIndex < 2) {
-                console.log("DEBUG_DRAW_METHOD", {
-                    wallLengthBefore: liveWallLimit - (mountainPtr - 3), // 3 bytes were advanced, so before is +3 tiles remaining effectively per tile index
-                    drawTile: tileToString(drawn)
-                });
-            }
-
-            if (DEBUG.wall && debugTrialIndex < 2) {
-                console.log("DEBUG_WALL_AFTER_DRAW", {
-                    wallLengthAfter: liveWallLimit - mountainPtr
-                });
-            }
-
+            
+            if (isRiichi && DEBUG.performance && debugTrialIndex < 3) console.log("RIICHI_DRAW");
+            
             const sDrawn = toSanmaTile(toNormalFive(drawn));
             if (sDrawn !== -1) hand27[sDrawn]++;
             if (drawn === TILES.p5r) redP5++; else if (drawn === TILES.s5r) redS5++;
             if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) isHaitei = true;
-
-            // Win Check
             const currentHand = reconstructHand();
-            const startAgari = performance.now();
-            const patterns = getAgariPatterns(currentHand, localFixedMentsuArr);
-            agariTotalTime += (performance.now() - startAgari);
-            agariCalls++;
-
+            const patterns = getAgariPatterns(currentHand, currentMentsu);
             if (patterns.length > 0) {
-                fullEvalCount++;
                 const state: GameState = {
                     bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
                     isRiichi, isDoubleRiichi: false, isIppatsu, isTsumo: true,
                     isRinshan: false, isChankan: false, isHaitei, isHoutei: false,
                     kitaCount: nukidoraCount, doraCount: getCurrentDoraCount(), uraDoraCount: 0,
                     winningTile: drawn, isDealer, turnCount: currentTurn + pathTurnCount,
-                    hasCallOccurred: localFixedMentsuArr.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
+                    hasCallOccurred: currentMentsu.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
                     discardCount: 0
                 };
-
                 if (isRiichi) {
                     let tempPool = 0; for (let n = 0; n < 29; n++) tempPool += trialCounts[n];
                     const tempCounts = workUraCounts; for (let n = 0; n < 29; n++) tempCounts[n] = trialCounts[n];
                     let udc = 0;
-                    for (let d = 0; d < doraIndicators.length; d++) {
+                    for (let d = 0; d < currentDoraInds.length; d++) {
                         if (tempPool <= 0) break;
                         let r = Math.floor(rng.next() * tempPool);
                         for (let j = 0; j < 29; j++) {
                             if (r < tempCounts[j]) {
                                 const val = getDoraValue(TILE_TYPES[j]);
                                 for (let k = 0; k < 27; k++) if (toStandardTile(k) === val) udc += hand27[k];
-                                for (const m of localFixedMentsuArr) for (const t of m.tiles) if (toNormalFive(t) === val) udc++;
+                                for (const m of currentMentsu) for (const t of m.tiles) if (toNormalFive(t) === val) udc++;
                                 tempCounts[j]--; tempPool--; break;
                             }
                             r -= tempCounts[j];
@@ -1466,72 +1625,36 @@ export function runSinglePath(
                     }
                     state.uraDoraCount = udc;
                 }
-
-                const startScore = performance.now();
                 let fastPoints = 0;
-                let bestInfo = { score: 0, han: 0, fu: 0, pinfu: false };
-
-                if (DEBUG.ukeire) {
-                    console.log("agariPatterns", patterns.length);
-                }
-
                 for (const p of patterns) {
                     const info = scoreWinningHandFast(currentHand, p, state);
-                    if (info.score > fastPoints) {
-                        fastPoints = info.score;
-                        bestInfo = info;
-                    }
+                    if (info.score > fastPoints) fastPoints = info.score;
                 }
-
-                // Final detailed log for the best matched pattern
-                if (DEBUG.ukeire) {
-                    console.log({
-                        han: bestInfo.han,
-                        fu: bestInfo.fu,
-                        score: bestInfo.score,
-                        riichi: state.isRiichi,
-                        uraDora: state.uraDoraCount,
-                        ippatsu: !!state.isIppatsu,
-                        pinfu: bestInfo.pinfu
-                    });
-                    console.log("winScore", fastPoints);
-                }
-
-                scoreFastTotalTime += (performance.now() - startScore);
-                scoreFastCalls++;
-
                 if (fastPoints > 0) {
-                    DEBUG_SIM_STATS.win++;
+                    if (isRiichi && DEBUG.performance && debugTrialIndex < 3) console.log("RIICHI_WIN");
+                    if (DEBUG.performance && debugTrialIndex < 3) console.log("WIN_DETECTED", fastPoints);
                     return {
                         type: 'win', point: fastPoints + scoreAdjustment, isTenpai: true,
-                        finalShanten: -1,
-                        initialRemainingTiles: initialTotalForSummary, totalAgariTurnSum: currentTurn + pathTurnCount,
-                        agariCount: 1, engineLiveWallLimit: liveWallLimit
+                        finalShanten: -1, initialRemainingTiles: initialTotalForSummary,
+                        totalAgariTurnSum: currentTurn + pathTurnCount, agariCount: 1, engineLiveWallLimit: liveWallLimit,
+                        win: true, score: fastPoints, endReason: 'win'
                     };
                 }
             }
-
-            // Discard
-            const bestD = findBestDiscard27(hand27, localFixedMentsuArr.length, trialCounts, doraIndicators, rng, tenpaiDepth, depth, currentTurn + pathTurnCount, debugTrialIndex);
+            let bestD = isRiichi ? sDrawn : findBestDiscard27(hand27, currentMentsu.length, trialCounts, currentDoraInds, rng, tenpaiDepth, depth, currentTurn + pathTurnCount, debugTrialIndex);
             if (bestD !== -1) {
                 hand27[bestD]--;
                 depth++;
                 const t34 = toStandardTile(bestD);
                 if (t34 === TILES.p5 && redP5 > 0 && hand27[bestD] < redP5) redP5--;
                 else if (t34 === TILES.s5 && redS5 > 0 && hand27[bestD] < redS5) redS5--;
-
-                if (!isRiichi && localFixedMentsuArr.length === 0 && calculateShantenCached(hand27, 0) === 0) {
-                    // New Tenpai Check Heuristics
+                const isCurrentlyMenzen = currentMentsu.every(m => !m.isOpen);
+                if (!isRiichi && isCurrentlyMenzen && calculateShantenCached(hand27, currentMentsu.length) === 0) {
                     let chooseRiichi = true;
                     if (!wasInitialTenpai) {
-                        // Check Dama Tenpai states
                         const currentHandAfterDiscard = reconstructHand();
-                        const patterns = getAgariPatterns(currentHandAfterDiscard, localFixedMentsuArr);
-
-                        let totalHan = 0;
-                        let totalScore = 0;
-                        let maxFu = 0; // The logic uses fu >= 50, let's track the max fu observed
-
+                        const patterns = getAgariPatterns(currentHandAfterDiscard, currentMentsu);
+                        let totalHan = 0; let totalScore = 0; let maxFu = 0;
                         if (patterns.length > 0) {
                             for (const p of patterns) {
                                 const mockState: GameState = {
@@ -1540,113 +1663,53 @@ export function runSinglePath(
                                     isRinshan: false, isChankan: false, isHaitei: false, isHoutei: false,
                                     kitaCount: nukidoraCount, doraCount: getCurrentDoraCount(), uraDoraCount: 0,
                                     winningTile: undefined, isDealer, turnCount: currentTurn + pathTurnCount,
-                                    hasCallOccurred: localFixedMentsuArr.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
+                                    hasCallOccurred: currentMentsu.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
                                     discardCount: 0
                                 };
                                 const info = scoreWinningHandFast(currentHandAfterDiscard, p, mockState);
-                                totalHan += info.han;
-                                totalScore += info.score;
+                                totalHan += info.han; totalScore += info.score;
                                 if (info.fu > maxFu) maxFu = info.fu;
                             }
-
-                            const averageHan = totalHan / patterns.length;
                             const averageScore = totalScore / patterns.length;
-                            const ukeireCount = getUkeireCount27(hand27, localFixedMentsuArr.length, trialCounts);
-                            const goodWait = ukeireCount >= 6;
-
-                            const turn = currentTurn + pathTurnCount;
-
-                            // Find Wait Tiles logic
-                            let waitHasManzu = false;
-                            let waitHasHonor = false;
-                            const tShanten = getShantenMemoized(hand27 as any, localFixedMentsuArr.length);
-                            for (let t = 0; t < 27; t++) {
-                                if (trialCounts[t] <= 0) continue;
-                                hand27[t]++;
-                                if (calculateShantenCached(hand27, localFixedMentsuArr.length) < tShanten) {
-                                    // t is a standard tile ID mapping
-                                    const tileType = TILE_TYPES[t];
-                                    if (tileType <= 8) waitHasManzu = true;
-                                    if (tileType >= 27) waitHasHonor = true;
-                                }
-                                hand27[t]--;
-                            }
-
-                            if (goodWait) {
-                                // ① averageScore >= 12000
-                                if (averageScore >= 12000) {
-                                    if (ukeireCount >= 9 && turn <= 9) {
-                                        chooseRiichi = true;
-                                    } else {
-                                        chooseRiichi = false; // Dama
-                                    }
-                                }
-                                // ② averageScore >= 8000 OR (han == 3 && maxFu >= 50)
-                                else if (averageScore >= 8000 || (averageHan >= 3 && maxFu >= 50)) {
-                                    if (turn <= 9) {
-                                        chooseRiichi = true;
-                                    } else {
-                                        chooseRiichi = false; // Dama
-                                    }
-                                }
-                                // ③ それ以外
-                                else {
-                                    chooseRiichi = true;
-                                }
-                            } else {
-                                // 愚形 (ukeire < 6)
-                                // ① han >= 3 && fu >= 40 (we check maxFu or average logic, using maxFu as strict fallback or averageHan)
-                                if (averageHan >= 3 && maxFu >= 40) {
-                                    if ((waitHasManzu || waitHasHonor) && turn <= 9) {
-                                        chooseRiichi = true;
-                                    } else {
-                                        chooseRiichi = false; // Dama
-                                    }
-                                }
-                                // ② それ以外
-                                else {
-                                    chooseRiichi = true;
-                                }
+                            const ukeireCount = getUkeireCount27(hand27, currentMentsu.length, trialCounts);
+                            if (ukeireCount >= 6) {
+                                if (averageScore >= 12000) chooseRiichi = (ukeireCount >= 9 && (currentTurn + pathTurnCount) <= 9);
+                                else if (averageScore >= 8000) chooseRiichi = (currentTurn + pathTurnCount) <= 9;
                             }
                         }
                     }
-
-                    if (DEBUG.wall && (currentTurn + pathTurnCount) % 50 === 0) {
-                        console.log("Riichi Decision", {
-                            initialShanten,
-                            wasInitialTenpai,
-                            isTenpai: true,
-                            canRiichi: true,
-                            chooseRiichi
-                        });
-                    }
-
-                    if (chooseRiichi) {
-                        isRiichi = true; isIppatsu = true; scoreAdjustment -= 1000;
-                    }
+                    if (chooseRiichi) { isRiichi = true; isIppatsu = true; scoreAdjustment -= 1000; }
                 }
-            } else { break; }
+            } else break;
             isIppatsu = false;
         }
-
-        const finalShantenVal = calculateShantenCached(hand27, localFixedMentsuArr.length);
+        const finalShantenVal = calculateShantenCached(hand27, currentMentsu.length);
         const isTenpaiResult = finalShantenVal <= 0;
-
-        if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) {
-            DEBUG_SIM_STATS.ryukyoku++;
-        } else {
-            DEBUG_SIM_STATS.wallExhaust++;
-        }
-
+        const endReason = mountainPtr >= liveWallLimit ? 'wallExhaust' : (isTenpaiResult ? 'tenpaiStop' : 'ryukyoku');
         return {
             type: 'draw', point: scoreAdjustment + (isTenpaiResult ? 1000 : -1000), isTenpai: isTenpaiResult,
-            finalShanten: finalShantenVal,
-            initialRemainingTiles: initialTotalForSummary, totalAgariTurnSum: 0, agariCount: 0,
-            engineLiveWallLimit: liveWallLimit
+            finalShanten: finalShantenVal, initialRemainingTiles: initialTotalForSummary,
+            totalAgariTurnSum: 0, agariCount: 0, engineLiveWallLimit: liveWallLimit,
+            win: false, score: 0, endReason
         };
     };
 
     const result = executePath();
+
+    if (result.win && !result.endReason) {
+        result.endReason = 'win';
+    }
+
+    if (result.endReason === 'win') {
+        DEBUG_SIM_STATS.win++;
+    } else if (result.endReason === 'wallExhaust') {
+        DEBUG_SIM_STATS.wallExhaust++;
+    } else if (result.endReason === 'tenpaiStop') {
+        DEBUG_SIM_STATS.tenpaiStop++;
+    } else {
+        DEBUG_SIM_STATS.ryukyoku++;
+    }
+
     return result;
 }
 
@@ -1758,6 +1821,8 @@ export interface Candidate {
     winCount: number;
     tenpaiCount: number;
     totalPoints: number;
+    totalAgariTurnSum: number;
+    agariCount: number;
 }
 
 export function updateCandidateStats(candidate: Candidate, ev: number): void {
@@ -1808,6 +1873,8 @@ export type UCBNode = {
     winCount: number;
     totalPoints: number;
     tenpaiCount: number;
+    totalAgariTurnSum: number;
+    agariCount: number;
 };
 
 export function computeUCB(node: UCBNode, totalVisits: number, exploration = 5000): number {

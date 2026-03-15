@@ -61,7 +61,7 @@ function testKanDoraEffect() {
     // - Dora: 1m x4 (Kan Dora).
     // Case 1: Ankan m1 + Riichi
     // We expect 4 Kan Dora + Ura Dora.
-    const actionAnkan: Action = { type: 'ankan', tile: TILES.m1, riichi: true };
+    const actionAnkan: Action = { type: 'ankanRiichi', tile: TILES.m1 };
     const scoreAnkan = runSinglePath([...hand], [], actionAnkan, live, dead, 0, [TILES.z2], 1, false).point;
 
     // Case 2: Normal Riichi (Discard m1)

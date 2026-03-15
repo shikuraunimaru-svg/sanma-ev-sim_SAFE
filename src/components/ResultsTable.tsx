@@ -47,7 +47,7 @@ export function ResultsTable({ results }: Props) {
                                     <div className="flex flex-col items-center justify-center scale-90 origin-center">
                                         {res.action.type !== 'tsumo' && (
                                             <TileDisplay
-                                                tile={res.action.type === 'kita' ? 30 : (res.action.type === 'ankan' || res.action.type === 'kakan') ? res.action.tile : res.action.tile}
+                                                tile={res.action.type === 'kita' ? 30 : (res.action.type === 'ankan' || res.action.type === 'ankanRiichi' || res.action.type === 'kakan') ? res.action.tile : (res.action as any).tile}
                                                 size="result"
                                                 className={isBest ? "ring-2 ring-yellow-400 rounded-sm shadow-md" : ""}
                                             />
@@ -59,8 +59,13 @@ export function ResultsTable({ results }: Props) {
                                             <div className="mt-1 text-[12px] font-bold text-gray-700 leading-none text-center">立直</div>
                                         )}
                                         {res.action.type === 'ankan' && (
-                                            <div className={`mt-1 text-[12px] font-bold leading-none text-center ${(res.action as any).riichi ? 'text-gray-700' : 'text-red-600'}`}>
-                                                {(res.action as any).riichi ? '暗槓立直' : '暗槓'}
+                                            <div className={`mt-1 text-[12px] font-bold leading-none text-center text-red-600`}>
+                                                暗槓
+                                            </div>
+                                        )}
+                                        {res.action.type === 'ankanRiichi' && (
+                                            <div className={`mt-1 text-[12px] font-bold leading-none text-center text-gray-700`}>
+                                                暗槓立直
                                             </div>
                                         )}
                                         {res.action.type === 'kakan' && (
@@ -82,9 +87,9 @@ export function ResultsTable({ results }: Props) {
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
                                     <div className="flex flex-col">
                                         <div>{(res.winRate * 100).toFixed(2)}%</div>
-                                        {res.reachedDiff && res.averageAgariAfterTurns !== null && res.averageAgariAfterTurns !== undefined && (
+                                        {results.sort((a,b) => b.trialCount - a.trialCount).slice(0, 3).some(r => r === res) && res.averageAgariAfterTurns !== null && res.averageAgariAfterTurns !== undefined && (
                                             <div className="text-[0.8em] text-blue-500 font-medium">
-                                                (平均 {res.averageAgariAfterTurns.toFixed(1)} 巡後)
+                                                (+{res.averageAgariAfterTurns.toFixed(1)}巡後)
                                             </div>
                                         )}
                                     </div>

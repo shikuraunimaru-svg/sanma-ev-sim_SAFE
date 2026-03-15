@@ -9,11 +9,12 @@ type Props = {
     fixedMentsu: Mentsu[];
     doraIndicators: Tile[];
     kitaCount: number;
+    otherKitaCount?: number;
     executionTurn: number;
     summary: SimulationSummary | null;
 };
 
-export function ResultHeader({ hand, fixedMentsu, doraIndicators, kitaCount, executionTurn, summary }: Props) {
+export function ResultHeader({ hand, fixedMentsu, doraIndicators, kitaCount, otherKitaCount = 0, executionTurn, summary }: Props) {
     return (
         <div className="flex flex-col gap-3 mb-6 bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
             {/* Hand Display - Single Row */}
@@ -33,20 +34,23 @@ export function ResultHeader({ hand, fixedMentsu, doraIndicators, kitaCount, exe
 
             {/* Dora, Kita, and Execution Turn - Single Row */}
             <div className="flex flex-row gap-4 items-center text-sm flex-wrap">
-                {doraIndicators.length > 0 && (
-                    <div className="flex flex-row gap-[2px] items-center">
-                        <div className="flex flex-col leading-tight text-xs mr-1 font-bold text-gray-600">
-                            <span>ドラ表</span>
-                            <span>示牌：</span>
+                <div className="flex flex-row gap-1 items-center">
+                    <span className="text-gray-700 font-bold mr-1">ドラ表示牌：</span>
+                    {doraIndicators.length > 0 ? (
+                        <div className="flex gap-[2px]">
+                            {doraIndicators.map((t, idx) => (
+                                <TileDisplay key={`summary-dora-${t}-${idx}`} tile={t} size="small" />
+                            ))}
                         </div>
-                        {doraIndicators.map((t, idx) => (
-                            <TileDisplay key={`summary-dora-${t}-${idx}`} tile={t} size="small" />
-                        ))}
-                    </div>
-                )}
+                    ) : (
+                        <span className="text-gray-500 font-normal">なし</span>
+                    )}
+                </div>
 
                 <div className="flex flex-row gap-1 items-center border-l border-gray-300 pl-4">
                     <span className="text-gray-700 font-bold">自分の抜き北：{kitaCount}枚</span>
+                    <span className="text-gray-400 font-bold mx-1">｜</span>
+                    <span className="text-gray-700 font-bold">他家合計抜き北：{otherKitaCount}枚</span>
                 </div>
 
                 <div className="flex flex-row gap-1 items-center border-l border-gray-300 pl-4">

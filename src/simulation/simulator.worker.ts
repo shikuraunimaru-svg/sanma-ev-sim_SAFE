@@ -204,12 +204,28 @@ export function runBatchSimulations(config: SimulationConfig) {
     const doraIndicatorCount = config.doraIndicators.length;
     const totalNukiCount = config.myKita + config.otherKita;
 
+    const OTHERS_HAND_TOTAL = 26; // 13 * 2
+    // IMPORTANT: wallAfterVisibleRemoval should include other players' hidden hands (26 tiles) 
+    // because they are still physically in the mountain until drawn.
     const wallAfterVisibleRemoval = TOTAL_WALL - playerHandCount - doraIndicatorCount - totalNukiCount;
     const remainingWall = wallAfterVisibleRemoval - drawsConsumed;
     const deadWallEffectiveCount = DEAD_WALL_TOTAL - doraIndicatorCount;
     const liveWallLimit = remainingWall - deadWallEffectiveCount;
-    const availableToPlayer = liveWallLimit - 26;
+    
+    // UI displays "Remaining" as the tiles that AREN'T in hidden hands.
+    // 63 (liveWallLimit) - 26 (others) = 37.
+    const initialRemainingTilesForUI = Math.max(0, liveWallLimit - OTHERS_HAND_TOTAL);
+    
+    const availableToPlayer = initialRemainingTilesForUI; 
     const selfEffectiveWallCount = availableToPlayer;
+
+    if (DEBUG.wall) {
+        console.log("TURN", currentTurn);
+        console.log("TURN_CONSUMPTION", (currentTurn - 1) * 3);
+        console.log("VISIBLE_TILES", Array.from(templateCounts));
+        console.log("REMAINING_WALL_SIM", remainingWall); // Total physical mountain
+        console.log("INITIAL_REMAINING_WALL", initialRemainingTilesForUI); // Displayed value (37)
+    }
 
     if (DEBUG.wall) {
         console.log("TURN_DEBUG", { currentTurn: config.currentTurn, drawsConsumed });
@@ -231,10 +247,12 @@ export function runBatchSimulations(config: SimulationConfig) {
         eliminated: false,
         winCount: 0,
         totalPoints: 0,
-        tenpaiCount: 0
+        tenpaiCount: 0,
+        totalAgariTurnSum: 0,
+        agariCount: 0
     }));
 
-    let initialRemainingTiles = 0;
+    let initialRemainingTiles = initialRemainingTilesForUI;
     let totalSimulationSteps = 0; // Total runSinglePath calls 
     const workTrialCounts = new Int8Array(29);
     const workHand27 = new Int8Array(27);
@@ -255,20 +273,22 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.winCount = 0;
         node.totalPoints = 0;
         node.tenpaiCount = 0;
+        node.totalAgariTurnSum = 0;
+        node.agariCount = 0;
     }
 
-    const updateNodeStats = (node: any, point: number) => {
-        // visits = 1 スタートの場合、1回目の実行で visits を 1 のままにするか 2 にするか。
-        // 一般的な UCB 実装では visits = 1 は「既に1回探索済み」を意味する。
-        // ここでは 実行 -> 加算 -> visitsインクリメント の順にする。
+    const updateNodeStats = (node: any, res: Engine.SimulationPathResult) => {
+        const point = res.point;
         node.sumEV += point;
         node.sumEV2 += point * point;
         if (point > 0) {
             node.winCount++;
             node.totalPoints += point;
         }
+        node.totalAgariTurnSum += res.totalAgariTurnSum;
+        node.agariCount += res.agariCount;
         node.meanEV = node.sumEV / node.visits;
-        node.visits++; // 次回の計算用にインクリメント
+        node.visits++;
     };
 
     const TOTAL_INITIAL_STEPS = 2000;
@@ -299,7 +319,7 @@ export function runBatchSimulations(config: SimulationConfig) {
                 templateCounts as any, workTrialCounts, workHand27, workUraCounts,
                 seed1, initialShanten, 0, totalSimulationSteps
             );
-            updateNodeStats(node, res1.point);
+            updateNodeStats(node, res1);
             if (res1.finalShanten <= 0) node.tenpaiCount++;
             totalSimulationSteps++;
 
@@ -311,7 +331,7 @@ export function runBatchSimulations(config: SimulationConfig) {
                 templateCounts as any, workTrialCounts, workHand27, workUraCounts,
                 seed2, initialShanten, 0, totalSimulationSteps
             );
-            updateNodeStats(node, res2.point);
+            updateNodeStats(node, res2);
             if (res2.finalShanten <= 0) node.tenpaiCount++;
             totalSimulationSteps++;
         }
@@ -365,7 +385,7 @@ export function runBatchSimulations(config: SimulationConfig) {
                 templateCounts as any, workTrialCounts, workHand27, workUraCounts,
                 seed1, initialShanten, 0, totalSimulationSteps
             );
-            updateNodeStats(node, res1.point);
+            updateNodeStats(node, res1);
             if (res1.finalShanten <= 0) node.tenpaiCount++;
             
             // res2
@@ -376,7 +396,7 @@ export function runBatchSimulations(config: SimulationConfig) {
                 templateCounts as any, workTrialCounts, workHand27, workUraCounts,
                 seed2, initialShanten, 0, totalSimulationSteps + 1
             );
-            updateNodeStats(node, res2.point);
+            updateNodeStats(node, res2);
             if (res2.finalShanten <= 0) node.tenpaiCount++;
 
             totalSimulationSteps += 2;
@@ -408,6 +428,16 @@ export function runBatchSimulations(config: SimulationConfig) {
         console.log("UKEIRE_COUNTS_27", ukeireCounts27);
     }
 
+    if (DEBUG.tenpai) {
+        ucbNodes.forEach(node => {
+            console.log("TENPAI_RATE_RAW", { 
+                action: node.action.type === 'discard' ? tileToString((node.action as any).tile) : node.action.type,
+                tenpaiCount: node.tenpaiCount, 
+                trialCount: node.visits - 1 
+            });
+        });
+    }
+
     const results: any[] = ucbNodes.map(node => {
         const ci = computeLocalCI(node);
         const visits = node.visits || 0;
@@ -421,21 +451,44 @@ export function runBatchSimulations(config: SimulationConfig) {
         }
         const ukeire = getUkeireInfo27(hand27, fixedMentsu.length, ukeireCounts27);
 
+        const actualTrials = visits > 1 ? visits - 1 : visits; // Adjust for visits=1 initialization
+        const shantenAfterDiscard = calculateShanten(handAfter, fixedMentsu.length);
+        const tenpaiRateVal = actualTrials > 0 ? node.tenpaiCount / actualTrials : 0;
+        const finalTenpaiRate = (shantenAfterDiscard === 0) ? 1.0 : tenpaiRateVal;
+
+        const averageAgariTurn = node.agariCount > 0 ? node.totalAgariTurnSum / node.agariCount : null;
+        const averageAgariAfterTurns = averageAgariTurn !== null ? averageAgariTurn - currentTurn : null;
+
+        if (DEBUG.performance && averageAgariTurn !== null) {
+            console.log("AVG_WIN_TURN", averageAgariTurn);
+            console.log("WIN_COUNT", node.agariCount);
+        }
+
+        if (DEBUG.tenpai) {
+            console.log("INITIAL_SHANTEN", initialShanten);
+            console.log("SHANTEN_AFTER", shantenAfterDiscard);
+            console.log("TENPAI_RAW", node.tenpaiCount, actualTrials);
+        }
+
         return {
             action: node.action,
             ev: visits > 0 ? node.meanEV : 0,
             evMean: visits > 0 ? node.meanEV : 0,
-            trialCount: visits,
-            winRate: visits > 0 ? winCount / visits : 0,
+            trialCount: actualTrials,
+            winRate: actualTrials > 0 ? winCount / actualTrials : 0,
             avgScore: winCount > 0 ? node.totalPoints / winCount : 0,
-            tenpaiRate: visits > 0 ? node.tenpaiCount / visits : 0,
+            tenpaiRate: finalTenpaiRate,
             shantenBefore: initialShanten,
-            shantenAfter: calculateShanten(handAfter, fixedMentsu.length),
+            shantenAfter: shantenAfterDiscard,
+            totalAgariTurnSum: node.totalAgariTurnSum,
+            agariCount: node.agariCount,
+            averageAgariTurn: averageAgariTurn,
+            averageAgariAfterTurns: averageAgariAfterTurns,
             effectiveTileTypes: ukeire.typeCount,
             effectiveTileCount: ukeire.tileCount,
             converged: racingStopReason === "CI_CONVERGED",
-            stdError: visits > 1 ? Math.sqrt(Math.max(((node.sumEV2 - visits * node.meanEV * node.meanEV) / (visits - 1)), 0)) / Math.sqrt(visits) : 0,
-            confidence95: visits > 1 ? (Math.abs(ci.upper - ci.lower) / 2) : 0,
+            stdError: actualTrials > 1 ? Math.sqrt(Math.max(((node.sumEV2 - actualTrials * node.meanEV * node.meanEV) / (actualTrials - 1)), 0)) / Math.sqrt(actualTrials) : 0,
+            confidence95: actualTrials > 1 ? (Math.abs(ci.upper - ci.lower) / 2) : 0,
             ciLower: visits > 0 ? ci.lower : 0,
             ciUpper: visits > 0 ? ci.upper : 0,
             lcb: visits > 0 ? ci.lower : 0
@@ -477,6 +530,7 @@ function normalizeTo14Tiles(hand: Tile[]): Tile[] {
 export function getPossibleActions(config: SimulationConfig): Action[] {
     if (DEBUG.actionGen) {
         console.log("GET_POSSIBLE_ACTIONS_CALLED");
+        console.log("HAND_SIZE_BEFORE_ACTION", config.myHand.length);
         console.log("ACTION_GEN_ENTRY", {
             hand: config.myHand.map(tileToString),
             handLength: config.myHand.length
@@ -572,6 +626,34 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         }
     }
 
+    // ④ 暗槓生成
+    const ankanCounts = new Map<number, number>();
+    for (const t of hand) {
+        const k = toNormalFive(t);
+        ankanCounts.set(k, (ankanCounts.get(k) || 0) + 1);
+    }
+
+    for (const [k, count] of ankanCounts.entries()) {
+        if (count >= 4 && k !== TILES.z4) {
+            const tile = TILE_TYPES.find(t => toNormalFive(t) === k)!;
+            
+            // DAMA ANKAN
+            actions.push({ type: 'ankan', tile });
+
+            // RIICHI ANKAN (if possible)
+            const handAfterAnkan = [...hand];
+            for (let i = 0; i < 4; i++) {
+                const idx = handAfterAnkan.findIndex(t => toNormalFive(t) === k);
+                if (idx !== -1) handAfterAnkan.splice(idx, 1);
+            }
+            // 10枚(副露1) または 13枚(副露0) の状態でシャンテン0ならリーチ可能
+            const nextShanten = calculateShanten(handAfterAnkan, config.fixedMentsu.length + 1);
+            if (nextShanten === 0 && isMenzen && !config.validationMode) {
+                actions.push({ type: 'ankanRiichi', tile });
+            }
+        }
+    }
+
     if (DEBUG.actionGen) {
         console.log("ACTIONS_AFTER_GENERATION", actions.map(a => ({
             type: a.type,
@@ -586,8 +668,17 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
     // キーは toNormalFive ベース × riichi で一意性を判断
     const keySet = new Set<string>();
     for (const a of actions) {
-        if (a.type !== 'discard') continue;
-        const key = `${toNormalFive(hand[a.tileInd])}-${a.riichi}`;
+        let key = "";
+        if (a.type === 'discard') {
+            key = `discard-${toNormalFive(hand[a.tileInd])}-${a.riichi}`;
+        } else if (a.type === 'ankan') {
+            key = `ankan-${toNormalFive(a.tile)}`;
+        } else if (a.type === 'ankanRiichi') {
+            key = `ankanRiichi-${toNormalFive(a.tile)}`;
+        } else {
+            key = a.type;
+        }
+
         if (keySet.has(key)) {
             throw new Error("DUPLICATE_ACTION_DETECTED: " + key);
         }
@@ -604,8 +695,19 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
     }
 
 
-    if (DEBUG.actionGen) console.log("TOTAL_ACTION_COUNT", actions.length);
-    if (hand.includes(TILES.z4 as any)) actions.push({ type: 'kita' });
-    if (DEBUG.actionGen) console.log("ACTION_GEN_EXIT_COUNT", actions.length);
-    return actions;
+    if (DEBUG.actionGen) {
+        console.log("TOTAL_ACTION_COUNT", actions.length);
+        console.log("ACTIONS_GENERATED", actions);
+    }
+    if (hand.includes(TILES.z4 as any)) {
+        actions.push({ type: 'kita' });
+    }
+    
+    // 修正1（必須）: undefined を除去
+    const filteredActions = actions.filter(a => a !== undefined);
+
+    if (DEBUG.actionGen) {
+        console.log("ACTION_GEN_EXIT_COUNT", filteredActions.length);
+    }
+    return filteredActions;
 }
