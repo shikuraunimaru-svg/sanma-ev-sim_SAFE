@@ -15,6 +15,7 @@ import {
 } from "./simulation/engine";
 import type { YakuResult } from './core/yaku';
 import type { ScoreResult } from './core/score';
+import { logImportant, logDebug, logVerbose } from './utils/logger';
 import { calculateShanten } from './core/shanten';
 
 export default function App() {
@@ -40,30 +41,30 @@ export default function App() {
 
   const workerRef = useRef<Worker | null>(null);
 
-  if (winResult) console.log("UI result:", winResult);
+  if (winResult) logDebug("UI result:", winResult);
 
   useEffect(() => {
     if (!workerRef.current) {
-      console.log("Creating worker (once)");
+      logDebug("Creating worker (once)");
       workerRef.current = new Worker(new URL('./simulation/simulator.worker.ts', import.meta.url), {
         type: 'module'
       });
     }
 
     const worker = workerRef.current;
-    console.log("Using worker instance:", worker);
+    logDebug("Using worker instance:", worker);
 
     worker.onerror = (e: ErrorEvent) => {
       console.error("Worker runtime error:", e);
     };
 
     worker.onmessage = (e: MessageEvent) => {
-      console.log("Main thread received:", e.data);
+      logVerbose("Main thread received:", e.data);
       const { type, results: data, winResult: winData, summary, csvReport: report } = e.data;
       if (type === 'RESULT' && data) {
-        console.log("RESULT_ACTIONS_START");
+        logVerbose("RESULT_ACTIONS_START");
         data.forEach((r: any, i: number) => {
-          console.log("RESULT", i, {
+          logVerbose("RESULT", i, {
             actionType: r.action?.type,
             tile: r.action?.tile,
             actionRaw: r.action,
@@ -72,12 +73,12 @@ export default function App() {
             trials: r.trialCount
           });
         });
-        console.log("RESULT_ACTIONS_END");
+        logVerbose("RESULT_ACTIONS_END");
 
-        console.log("MAIN_THREAD_RESULT_SAMPLE", data[0]);
+        logVerbose("MAIN_THREAD_RESULT_SAMPLE", data[0]);
         setResults(data);
         if (summary && summary.totalTimeMs !== undefined) {
-          console.log(`Simulation time: ${summary.totalTimeMs.toFixed(2)} ms`);
+          logImportant(`Simulation time: ${summary.totalTimeMs.toFixed(2)} ms`);
         }
         setSimulationSummary(summary);
         setCsvReport(report);
@@ -95,7 +96,7 @@ export default function App() {
     };
 
     return () => {
-      console.log("Terminating worker");
+      logDebug("Terminating worker");
       worker?.terminate();
       workerRef.current = null;
     };

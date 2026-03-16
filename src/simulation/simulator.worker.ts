@@ -1,8 +1,9 @@
 import { toNormalFive, TILES, tileToString, isRedFive } from '../core/tile';
 import type { Tile } from '../core/tile';
 import { toSanmaTile } from '../core/sanmaTiles';
+import { logImportant, logDebug, logVerbose } from '../utils/logger';
 import * as Engine from './engine';
-const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, reverseWallPool, swappedWallPool, swappedReverseWallPool, initWallPool, DEBUG, getUkeireInfo27, swapSimulationConfig, swapTileArray, swapAction, swapPinSou } = Engine;
+const { runSinglePath, evaluateWinningHand, getInitialCounts, TILE_TYPES, initShantenCache, clearShantenCache, clearAgariCache, agariCache, getShantenMemoized, resetDebugCounters, createSummary, logPerformanceStats, wallPool, reverseWallPool, swappedWallPool, swappedReverseWallPool, initWallPool, DEBUG, swapSimulationConfig, swapTileArray, swapAction, swapPinSou, getUkeireInfo27 } = Engine;
 type Candidate = Engine.Candidate;
 // fullEvalCount は Engine モジュール変数として直接参照 (Engine.fullEvalCount)
 
@@ -104,6 +105,7 @@ function buildWallTemplate(
 export function runBatchSimulations(config: SimulationConfig) {
     const startTime = performance.now();
     initShantenCache();
+    clearAgariCache();
     resetDebugCounters();
 
     // Successive Elimination Constants
@@ -168,7 +170,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         for (let i = 0; i < wall.length; i++) {
             counts[wall[i]]++;
         }
-        console.log("DEBUG_WALL_COUNTS", counts);
+        logDebug("DEBUG_WALL_COUNTS", counts);
     };
     debugWallCounts(templateMountain);
 
@@ -180,7 +182,7 @@ export function runBatchSimulations(config: SimulationConfig) {
             const s = tileToString(tile);
             counts[s] = (counts[s] || 0) + 1;
         }
-        console.log("DEBUG_WALL_UNIQUE", counts);
+        logDebug("DEBUG_WALL_UNIQUE", counts);
     };
     debugUniqueTiles(templateMountain);
 
@@ -189,11 +191,11 @@ export function runBatchSimulations(config: SimulationConfig) {
     // プールが空の場合だけでなく毎ターン更新するのが安全です。
     initWallPool(templateMountain);
     if (DEBUG.wall) {
-        console.log("WallPool initialized:", wallPool.length);
+        logDebug("WallPool initialized:", wallPool.length);
     }
 
     if (DEBUG.wall) {
-        console.log("WALL_TEMPLATE_BUILT", templateMountain.length); // シミュレーション全体で1回だけ出力
+        logDebug("WALL_TEMPLATE_BUILT", templateMountain.length); // シミュレーション全体で1回だけ出力
     }
 
     const templateLen = templateMountain.length;
@@ -220,19 +222,19 @@ export function runBatchSimulations(config: SimulationConfig) {
     const selfEffectiveWallCount = availableToPlayer;
 
     if (DEBUG.wall) {
-        console.log("TURN", currentTurn);
-        console.log("TURN_CONSUMPTION", (currentTurn - 1) * 3);
-        console.log("VISIBLE_TILES", Array.from(templateCounts));
-        console.log("REMAINING_WALL_SIM", remainingWall); // Total physical mountain
-        console.log("INITIAL_REMAINING_WALL", initialRemainingTilesForUI); // Displayed value (37)
+        logVerbose("TURN", currentTurn);
+        logVerbose("TURN_CONSUMPTION", (currentTurn - 1) * 3);
+        logVerbose("VISIBLE_TILES", Array.from(templateCounts));
+        logVerbose("REMAINING_WALL_SIM", remainingWall); // Total physical mountain
+        logVerbose("INITIAL_REMAINING_WALL", initialRemainingTilesForUI); // Displayed value (37)
     }
 
     if (DEBUG.wall) {
-        console.log("TURN_DEBUG", { currentTurn: config.currentTurn, drawsConsumed });
-        console.log("SANMA_WALL_FINAL_CHECK", { remainingWall, deadWallEffectiveCount, liveWallLimit, availableToPlayer });
+        logVerbose("TURN_DEBUG", { currentTurn: config.currentTurn, drawsConsumed });
+        logVerbose("SANMA_WALL_FINAL_CHECK", { remainingWall, deadWallEffectiveCount, liveWallLimit, availableToPlayer });
 
         const theoreticalLiveWall = Math.max(0, templateMountain.length - 13);
-        console.log("PRE_ENGINE_WALL_STATE", {
+        logVerbose("PRE_ENGINE_WALL_STATE", {
             templateLength: templateMountain.length,
             theoreticalLiveWall
         });
@@ -250,7 +252,10 @@ export function runBatchSimulations(config: SimulationConfig) {
         totalPoints: 0,
         tenpaiCount: 0,
         totalAgariTurnSum: 0,
-        agariCount: 0
+        agariCount: 0,
+        ryukyokuCount: 0,
+        tenpaiStopCount: 0,
+        wallExhaustCount: 0
     }));
 
     let initialRemainingTiles = initialRemainingTilesForUI;
@@ -290,6 +295,9 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.tenpaiCount = 0;
         node.totalAgariTurnSum = 0;
         node.agariCount = 0;
+        node.ryukyokuCount = 0;
+        node.tenpaiStopCount = 0;
+        node.wallExhaustCount = 0;
     }
 
     const updateNodeStats = (node: any, res: Engine.SimulationPathResult) => {
@@ -308,6 +316,9 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.totalAgariTurnSum += res.totalAgariTurnSum;
         node.agariCount += res.agariCount;
         node.meanEV = node.sumEV / node.visits;
+        if (res.endReason === 'ryukyoku') node.ryukyokuCount++;
+        if (res.endReason === 'tenpaiStop') node.tenpaiStopCount++;
+        if (res.endReason === 'wallExhaust') node.wallExhaustCount++;
         node.visits++;
     };
 
@@ -385,7 +396,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         }
         
         if (DEBUG.wall && w % 10 === 0) {
-            console.log("Batch CRN progress:", { wallIndex: w, totalSteps: totalSimulationSteps });
+            logDebug("Batch CRN progress:", { wallIndex: w, totalSteps: totalSimulationSteps });
         }
     }
 
@@ -499,12 +510,12 @@ export function runBatchSimulations(config: SimulationConfig) {
         if (s !== -1) ukeireCounts27[s] += visibilityCounts29[i];
     }
     if (DEBUG.ukeire) {
-        console.log("UKEIRE_COUNTS_27", ukeireCounts27);
+        logDebug("UKEIRE_COUNTS_27", ukeireCounts27);
     }
 
     if (DEBUG.tenpai) {
         ucbNodes.forEach(node => {
-            console.log("TENPAI_RATE_RAW", { 
+            logDebug("TENPAI_RATE_RAW", { 
                 action: node.action.type === 'discard' ? tileToString((node.action as any).tile) : node.action.type,
                 tenpaiCount: node.tenpaiCount, 
                 trialCount: node.visits - 1 
@@ -549,14 +560,14 @@ export function runBatchSimulations(config: SimulationConfig) {
         const averageAgariAfterTurns = averageAgariTurn !== null ? averageAgariTurn - currentTurn : null;
 
         if (DEBUG.performance && averageAgariTurn !== null) {
-            console.log("AVG_WIN_TURN", averageAgariTurn);
-            console.log("WIN_COUNT", node.agariCount);
+            logDebug("AVG_WIN_TURN", averageAgariTurn);
+            logDebug("WIN_COUNT", node.agariCount);
         }
 
         if (DEBUG.tenpai) {
-            console.log("INITIAL_SHANTEN", initialShanten);
-            console.log("SHANTEN_AFTER", shantenAfterDiscard);
-            console.log("TENPAI_RAW", node.tenpaiCount, actualTrials);
+            logDebug("INITIAL_SHANTEN", initialShanten);
+            logDebug("SHANTEN_AFTER", shantenAfterDiscard);
+            logDebug("TENPAI_RAW", node.tenpaiCount, actualTrials);
         }
 
         return {
@@ -581,8 +592,28 @@ export function runBatchSimulations(config: SimulationConfig) {
             confidence95: actualTrials > 1 ? (Math.abs(ci.upper - ci.lower) / 2) : 0,
             ciLower: visits > 0 ? ci.lower : 0,
             ciUpper: visits > 0 ? ci.upper : 0,
-            lcb: visits > 0 ? ci.lower : 0
+            lcb: visits > 0 ? ci.lower : 0,
+            ryukyokuCount: node.ryukyokuCount,
+            tenpaiStopCount: node.tenpaiStopCount,
+            wallExhaustCount: node.wallExhaustCount
         };
+    });
+
+    // Logging Trial Stats and End Reasons
+    results.forEach(r => {
+        const actionStr = r.action.type === 'discard' ? tileToString(r.action.tile) : r.action.type;
+        logImportant("ACTION_TRIAL_STATS", {
+            tile: actionStr,
+            trials: r.trialCount,
+            winRate: r.winRate,
+            ev: r.evMean
+        });
+        logImportant("ACTION_END_REASON", {
+            tile: actionStr,
+            win: r.agariCount, // r.winRate converts this to stats, here raw agariCount might be winCount, but note: node.winCount is passed down
+            ryukyoku: r.ryukyokuCount,
+            tenpaiStop: r.tenpaiStopCount
+        });
     });
 
     const endTime = performance.now();
@@ -598,6 +629,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     self.postMessage({ type: 'RESULT', results, summary });
     if (DEBUG.performance) {
         logPerformanceStats();
+        logImportant("waitCache size:", agariCache.size);
     }
     clearShantenCache();
 }

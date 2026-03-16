@@ -10,8 +10,34 @@ import { calculateScore } from '../core/yaku';
 import type { GameState, YakuResult } from '../core/yaku';
 import { calculatePoints } from '../core/score';
 import type { ScoreResult } from '../core/score';
+import { logImportant, logDebug, logVerbose } from '../utils/logger';
 
 export const ENABLE_STATE_CACHE = false;
+
+export const agariCache = new Map<string, HandStructure[]>();
+
+export function clearAgariCache() {
+    agariCache.clear();
+}
+
+export function makeHandKey(hand: Tile[], mentsu: Mentsu[]): string {
+    const h = hand.map(t => toNormalFive(t)).sort((a, b) => a - b).join(',');
+    if (!mentsu || mentsu.length === 0) return h;
+    const m = mentsu.map(m => m.tiles.map(t => toNormalFive(t)).sort((a,b)=>a-b).join('-')).sort().join('|');
+    return `${h}|${m}`;
+}
+
+export function getAgariPatternsCached(hand: Tile[], mentsu: Mentsu[], h27: Int8Array | number[] | Uint8Array): HandStructure[] {
+    if (calculateShanten27(h27 as any, mentsu.length) > 0) return [];
+    const key = makeHandKey(hand, mentsu);
+    let cached = agariCache.get(key);
+    if (!cached) {
+        cached = getAgariPatterns(hand, mentsu);
+        agariCache.set(key, cached);
+        if (agariCache.size > 50000) agariCache.clear();
+    }
+    return cached;
+}
 
 export const DEBUG = {
     actionGen: false,
@@ -379,7 +405,7 @@ export function scoreWinningHandFast(
 
     // ----- HAN_DEBUG (Phase73: 指示内容のログ追加) -----
     if (DEBUG.ukeire && han >= 8) {
-        console.log("HAN_DEBUG", {
+        logVerbose("HAN_DEBUG", {
             han,
             fu: hasPinfu ? 20 : calcFuFast(structure, state.winningTile ?? -1),
             doraCount: state.doraCount,
@@ -681,43 +707,43 @@ export function logPerformanceStats() {
     const totalCache = cacheHits + cacheMisses;
     const hitRate = totalCache > 0 ? ((cacheHits / totalCache) * 100).toFixed(1) : "0.0";
 
-    console.log("---- Simulation End Reasons ----");
-    console.log("win:", DEBUG_SIM_STATS.win);
-    console.log("ryukyoku:", DEBUG_SIM_STATS.ryukyoku);
-    console.log("tenpaiStop:", DEBUG_SIM_STATS.tenpaiStop);
-    console.log("wallExhaust:", DEBUG_SIM_STATS.wallExhaust);
-    console.log("--------------------------------");
+    logImportant("---- Simulation End Reasons ----");
+    logImportant("win:", DEBUG_SIM_STATS.win);
+    logImportant("ryukyoku:", DEBUG_SIM_STATS.ryukyoku);
+    logImportant("tenpaiStop:", DEBUG_SIM_STATS.tenpaiStop);
+    logImportant("wallExhaust:", DEBUG_SIM_STATS.wallExhaust);
+    logImportant("--------------------------------");
 
-    console.log("--- Performance Stats ---");
+    logImportant("--- Performance Stats ---");
     if (ENABLE_STATE_CACHE) {
-        console.log(`stateCache size: ${stateCache.size}`);
-        console.log(`cacheHits: ${cacheHits}`);
-        console.log(`cacheMisses: ${cacheMisses}`);
-        console.log(`cacheHitRate: ${hitRate} %`);
-        console.log("");
+        logImportant(`stateCache size: ${stateCache.size}`);
+        logImportant(`cacheHits: ${cacheHits}`);
+        logImportant(`cacheMisses: ${cacheMisses}`);
+        logImportant(`cacheHitRate: ${hitRate} %`);
+        logImportant("");
     }
     const totalShantenCache = shantenCacheHits + shantenCacheMisses;
     const shantenHitRate = totalShantenCache > 0 ? ((shantenCacheHits / totalShantenCache) * 100).toFixed(1) : "0.0";
 
-    console.log(`shantenCache size: ${shantenCache.size}`);
-    console.log(`shantenCacheHits: ${shantenCacheHits}`);
-    console.log(`shantenCacheMisses: ${shantenCacheMisses}`);
-    console.log(`shantenCacheHitRate: ${shantenHitRate} %`);
-    console.log(`calculateShanten calls: ${shantenCalls}`);
+    logImportant(`shantenCache size: ${shantenCache.size}`);
+    logImportant(`shantenCacheHits: ${shantenCacheHits}`);
+    logImportant(`shantenCacheMisses: ${shantenCacheMisses}`);
+    logImportant(`shantenCacheHitRate: ${shantenHitRate} %`);
+    logImportant(`calculateShanten calls: ${shantenCalls}`);
     const shantenTotal = shantenCacheHits + shantenCacheMisses;
     const shantenRate = shantenTotal > 0 ? (shantenCacheHits / shantenTotal) * 100 : 0;
-    console.log(`shantenCacheHitRate: ${shantenRate.toFixed(1)} %`);
-    console.log("");
-    console.log(`calculateShanten calls: ${shantenCalls}`);
-    console.log(`calculateShanten totalTime: ${shantenTotalTime.toFixed(2)} ms`);
-    console.log("");
-    console.log(`getAgariPatterns calls: ${agariCalls}`);
-    console.log(`getAgariPatterns totalTime: ${agariTotalTime.toFixed(2)} ms`);
-    console.log("");
-    console.log(`scoreWinningHandFast calls: ${scoreFastCalls}`);
-    console.log(`scoreWinningHandFast totalTime: ${scoreFastTotalTime.toFixed(2)} ms`);
-    console.log(`WallPool size: ${WALL_POOL_SIZE}`);
-    console.log("-------------------------");
+    logImportant(`shantenCacheHitRate: ${shantenRate.toFixed(1)} %`);
+    logImportant("");
+    logImportant(`calculateShanten calls: ${shantenCalls}`);
+    logImportant(`calculateShanten totalTime: ${shantenTotalTime.toFixed(2)} ms`);
+    logImportant("");
+    logImportant(`getAgariPatterns calls: ${agariCalls}`);
+    logImportant(`getAgariPatterns totalTime: ${agariTotalTime.toFixed(2)} ms`);
+    logImportant("");
+    logImportant(`scoreWinningHandFast calls: ${scoreFastCalls}`);
+    logImportant(`scoreWinningHandFast totalTime: ${scoreFastTotalTime.toFixed(2)} ms`);
+    logDebug(`WallPool size: ${WALL_POOL_SIZE}`);
+    logImportant("-------------------------");
 }
 
 export function resetPerformanceStats() {
@@ -779,8 +805,8 @@ export function initWallPool(template: Uint8Array) {
         swappedReverseWallPool.push(srw);
     }
     if (DEBUG.performance) {
-        console.log("WallPool size:", wallPool.length);
-        console.log("ReverseWallPool size:", reverseWallPool.length);
+        logDebug("WallPool size:", wallPool.length);
+        logDebug("ReverseWallPool size:", reverseWallPool.length);
     }
 }
 
@@ -925,7 +951,6 @@ export function evaluateShapeProgress(beforeHand: Int8Array | number[], drawT27:
     const B = (delta: number) => {
         if (type === 3) return 0;
         const n = num + delta;
-        if (type === 0 && (n < 1 || n > 9)) return 0;
         if (n < 1 || n > 9) return 0;
         const target = toSanmaTile(normTile + delta);
         if (target === -1) return 0;
@@ -1147,6 +1172,12 @@ export function findBestDiscard27(
 
         hand27[i]--;
         const s = calculateShantenCached(hand27, fixedMentsuCount);
+        if (debugTrialIndex < 5) {
+            logVerbose("SHANTEN_STATE", {
+                shanten: s,
+                turn: turn
+            });
+        }
 
         // If forcing tenpai maintenance, skip any discard that increases shanten above 0
         if (forceMaintainTenpai && s > 0) {
@@ -1401,8 +1432,8 @@ export function runSinglePath(
     // Internalized path executor
     const executePath = (): SimulationPathResult => {
         if (DEBUG.performance && debugTrialIndex < 3) {
-            console.log("ACTION_TYPE", initialAction.type);
-            console.log("EXECUTE_PATH_CALLED", { 
+            logDebug("ACTION_TYPE", initialAction.type);
+            logDebug("EXECUTE_PATH_CALLED", { 
                 actionType: initialAction.type,
                 tile: (initialAction as any).tile ? tileToString((initialAction as any).tile) : 'none'
             });
@@ -1531,7 +1562,7 @@ export function runSinglePath(
                     if (DEBUG.performance && debugTrialIndex < 3) console.log("RINSHAN_DRAW", rinshanTile);
                     // Win Check on Rinshan
                     agariCalls++;
-                    const pRinshan = getAgariPatterns(reconstructHand(), currentMentsu);
+                    const pRinshan = getAgariPatternsCached(reconstructHand(), currentMentsu, hand27);
                     if (pRinshan.length > 0) {
                         const state: GameState = {
                             bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
@@ -1613,7 +1644,7 @@ export function runSinglePath(
             // Check win immediately
             const currentHand = reconstructHand();
             agariCalls++;
-            const patterns = getAgariPatterns(currentHand, currentMentsu);
+            const patterns = getAgariPatternsCached(currentHand, currentMentsu, hand27);
             if (patterns.length > 0) {
                 const state: GameState = {
                     bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
@@ -1658,24 +1689,39 @@ export function runSinglePath(
                 drawn = tile;
                 break;
             }
-            if (!drawn) break;
+            const prevShanten = calculateShantenCached(hand27, currentMentsu.length);
             
-            if (isRiichi && DEBUG.performance && debugTrialIndex < 3) console.log("RIICHI_DRAW");
+            if (isRiichi && DEBUG.performance && debugTrialIndex < 3) logVerbose("RIICHI_DRAW");
             
-            const sDrawn = toSanmaTile(toNormalFive(drawn));
+            const sDrawn = toSanmaTile(toNormalFive(drawn as Tile));
             if (sDrawn !== -1) hand27[sDrawn]++;
+            
+            const preDrawShanten = calculateShantenCached(hand27, currentMentsu.length);
+            if (debugTrialIndex < 5 && prevShanten !== preDrawShanten) {
+                logVerbose("SHANTEN_TRANSITION", {
+                    before: prevShanten,
+                    after: preDrawShanten,
+                    turn: currentTurn + pathTurnCount
+                });
+            }
+            if (debugTrialIndex < 5 && preDrawShanten === 0) {
+                logVerbose("POST_TENPAI_DRAW", {
+                    turn: currentTurn + pathTurnCount,
+                    tilesLeft: Math.floor(Math.max(0, liveWallLimit - mountainPtr) / 3)
+                });
+            }
             if (drawn === TILES.p5r) redP5++; else if (drawn === TILES.s5r) redS5++;
             if (mountainPtr >= liveWallLimit || selfDrawCount >= selfDrawQuota) isHaitei = true;
             const currentHand = reconstructHand();
             agariCalls++;
-            const patterns = getAgariPatterns(currentHand, currentMentsu);
+            const patterns = getAgariPatternsCached(currentHand, currentMentsu, hand27);
             if (patterns.length > 0) {
                 const state: GameState = {
                     bakaze: TILES.z1, jikaze: isDealer ? TILES.z1 : TILES.z2,
                     isRiichi, isDoubleRiichi: false, isIppatsu, isTsumo: true,
                     isRinshan: false, isChankan: false, isHaitei, isHoutei: false,
                     kitaCount: nukidoraCount, doraCount: getCurrentDoraCount(), uraDoraCount: 0,
-                    winningTile: drawn, isDealer, turnCount: currentTurn + pathTurnCount,
+                    winningTile: drawn!, isDealer, turnCount: currentTurn + pathTurnCount,
                     hasCallOccurred: currentMentsu.some(m => m.isOpen || m.isKan) || nukidoraCount > 0,
                     discardCount: 0
                 };
@@ -1718,6 +1764,14 @@ export function runSinglePath(
             if (bestD !== -1) {
                 hand27[bestD]--;
                 depth++;
+                const currentShantenForLog = calculateShantenCached(hand27, currentMentsu.length);
+                if (debugTrialIndex < 5 && currentShantenForLog === 0) {
+                    logVerbose("TENPAI_DETECTED", {
+                        action: action.type === 'discard' ? tileToString((action as any).tile) : action.type,
+                        turn: currentTurn + pathTurnCount,
+                        tilesLeft: Math.floor(Math.max(0, liveWallLimit - mountainPtr) / 3)
+                    });
+                }
                 const t34 = toStandardTile(bestD);
                 if (t34 === TILES.p5 && redP5 > 0 && hand27[bestD] < redP5) redP5--;
                 else if (t34 === TILES.s5 && redS5 > 0 && hand27[bestD] < redS5) redS5--;
@@ -1759,7 +1813,20 @@ export function runSinglePath(
         }
         const finalShantenVal = calculateShantenCached(hand27, currentMentsu.length);
         const isTenpaiResult = finalShantenVal <= 0;
-        const endReason = mountainPtr >= liveWallLimit ? 'wallExhaust' : (isTenpaiResult ? 'tenpaiStop' : 'ryukyoku');
+        
+        let endReason = 'ryukyoku';
+        const finalTilesLeft = Math.floor(Math.max(0, liveWallLimit - mountainPtr) / 3);
+        if (mountainPtr >= liveWallLimit) {
+            endReason = 'wallExhaust';
+            if (debugTrialIndex < 5) console.log("WALL_EXHAUST_TRIGGERED", { turn: currentTurn + pathTurnCount });
+        } else if (selfDrawCount >= selfDrawQuota) {
+            if (debugTrialIndex < 5) console.log("MAX_TURN_REACHED", { turn: currentTurn + pathTurnCount });
+            endReason = isTenpaiResult ? 'tenpaiStop' : 'ryukyoku';
+            if (isTenpaiResult && debugTrialIndex < 5) console.log("TENPAI_STOP_TRIGGERED", { turn: currentTurn + pathTurnCount, tilesLeft: finalTilesLeft });
+        } else {
+            endReason = isTenpaiResult ? 'tenpaiStop' : 'ryukyoku';
+            if (isTenpaiResult && debugTrialIndex < 5) console.log("TENPAI_STOP_TRIGGERED", { turn: currentTurn + pathTurnCount, tilesLeft: finalTilesLeft });
+        }
         return {
             type: 'draw', point: scoreAdjustment + (isTenpaiResult ? 1000 : -1000), isTenpai: isTenpaiResult,
             finalShanten: finalShantenVal, initialRemainingTiles: initialTotalForSummary,
