@@ -3,9 +3,10 @@ import { TileDisplay } from './TileDisplay';
 
 type Props = {
     results: DiscardResult[];
+    currentTurn: number;
 };
 
-export function ResultsTable({ results }: Props) {
+export function ResultsTable({ results, currentTurn }: Props) {
     // Ultimate Successive Elimination with Common Random Numbers (CRN)
     // Sort by EV desc
     const sorted = [...results].sort((a, b) => b.ev - a.ev);
@@ -98,7 +99,16 @@ export function ResultsTable({ results }: Props) {
                                     {res.avgWinPoint?.toLocaleString() ?? 0}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-gray-500">
-                                    {(res.tenpaiRate * 100).toFixed(1)}%
+                                    <div className="flex flex-col">
+                                        <div>{(res.tenpaiRate * 100).toFixed(1)}%</div>
+                                        {res.tenpaiBy10Rate !== undefined && res.tenpaiWithin3Rate !== undefined && (
+                                            <div className="text-[0.8em] text-gray-400 font-medium leading-none mt-1">
+                                                {currentTurn < 10
+                                                    ? `(10巡目以内 ${(res.tenpaiBy10Rate * 100).toFixed(1)}%)`
+                                                    : `(３巡以内 ${(res.tenpaiWithin3Rate * 100).toFixed(1)}%)`}
+                                            </div>
+                                        )}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <div className="flex flex-col">

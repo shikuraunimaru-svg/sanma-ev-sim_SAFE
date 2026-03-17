@@ -232,8 +232,6 @@ export default function App() {
             onMyKitaChange={handleMyKitaChange}
             otherKita={otherKita}
             onOtherKitaChange={handleOtherKitaChange}
-            validationMode={validationMode}
-            onValidationModeChange={setValidationMode}
           />
         </section>
 
@@ -318,20 +316,9 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <ResultsTable results={results} />
+              <ResultsTable results={results} currentTurn={currentTurn} />
             )}
           </section>
-        )}
-        {csvReport && (
-          <div className="mt-4 text-center">
-            <a
-              href={`data:text/csv;charset=utf-8,${encodeURIComponent(csvReport)}`}
-              download={`sanma_sim_validation_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`}
-              className="inline-block bg-green-600 text-white px-6 py-2 rounded shadow hover:bg-green-700 font-bold"
-            >
-              📥 検証レポート(CSV)をダウンロード
-            </a>
-          </div>
         )}
       </div>
     </div>

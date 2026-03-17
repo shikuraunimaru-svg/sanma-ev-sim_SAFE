@@ -255,7 +255,9 @@ export function runBatchSimulations(config: SimulationConfig) {
         agariCount: 0,
         ryukyokuCount: 0,
         tenpaiStopCount: 0,
-        wallExhaustCount: 0
+        wallExhaustCount: 0,
+        tenpaiBy10TurnCount: 0,
+        tenpaiWithin3TurnCount: 0
     }));
 
     let initialRemainingTiles = initialRemainingTilesForUI;
@@ -298,6 +300,8 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.ryukyokuCount = 0;
         node.tenpaiStopCount = 0;
         node.wallExhaustCount = 0;
+        node.tenpaiBy10TurnCount = 0;
+        node.tenpaiWithin3TurnCount = 0;
     }
 
     const updateNodeStats = (node: any, res: Engine.SimulationPathResult) => {
@@ -319,6 +323,12 @@ export function runBatchSimulations(config: SimulationConfig) {
         if (res.endReason === 'ryukyoku') node.ryukyokuCount++;
         if (res.endReason === 'tenpaiStop') node.tenpaiStopCount++;
         if (res.endReason === 'wallExhaust') node.wallExhaustCount++;
+        
+        if (res.firstTenpaiTurn !== undefined && res.firstTenpaiTurn !== -1) {
+            if (res.firstTenpaiTurn <= 10) node.tenpaiBy10TurnCount++;
+            if (res.firstTenpaiTurn <= currentTurn + 3) node.tenpaiWithin3TurnCount++;
+        }
+
         node.visits++;
     };
 
@@ -556,6 +566,9 @@ export function runBatchSimulations(config: SimulationConfig) {
         const tenpaiRateVal = actualTrials > 0 ? node.tenpaiCount / actualTrials : 0;
         const finalTenpaiRate = (shantenAfterDiscard === 0) ? 1.0 : tenpaiRateVal;
 
+        const tenpaiBy10Rate = actualTrials > 0 ? node.tenpaiBy10TurnCount / actualTrials : 0;
+        const tenpaiWithin3Rate = actualTrials > 0 ? node.tenpaiWithin3TurnCount / actualTrials : 0;
+
         const averageAgariTurn = node.agariCount > 0 ? node.totalAgariTurnSum / node.agariCount : null;
         const averageAgariAfterTurns = averageAgariTurn !== null ? averageAgariTurn - currentTurn : null;
 
@@ -579,6 +592,8 @@ export function runBatchSimulations(config: SimulationConfig) {
             avgScore: winCount > 0 ? node.totalPoints / winCount : 0,
             avgWinPoint: winCount > 0 ? Math.round(node.sumWinPoint / winCount) : 0,
             tenpaiRate: finalTenpaiRate,
+            tenpaiBy10Rate,
+            tenpaiWithin3Rate,
             shantenBefore: initialShanten,
             shantenAfter: shantenAfterDiscard,
             totalAgariTurnSum: node.totalAgariTurnSum,

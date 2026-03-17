@@ -597,6 +597,8 @@ export type DiscardResult = {
     evMean: number;
     ronRate: number;
     tenpaiRate: number;
+    tenpaiBy10Rate?: number;
+    tenpaiWithin3Rate?: number;
     shantenBefore: number;
     shantenAfter: number;
     trialCount: number;
@@ -640,9 +642,10 @@ export type SimulationPathResult = {
     totalAgariTurnSum: number;
     agariCount: number;
     engineLiveWallLimit: number;
-    win?: boolean;
+        win?: boolean;
     score?: number;
     endReason?: string;
+    firstTenpaiTurn?: number;
 };
 
 export let fullEvalCount = 0; // Phase71: win 判定（patterns.length > 0）カウンタ
@@ -1502,6 +1505,7 @@ export function runSinglePath(
         const currentDoraInds = [...doraIndicators];
         const currentMentsu = [...localFixedMentsuArr];
         const wasInitialTenpai = (initialShanten === 0);
+        let firstTenpaiTurn = wasInitialTenpai ? currentTurn : -1;
 
         const reconstructHand = (): Tile[] => {
             const res: Tile[] = [];
@@ -1603,7 +1607,7 @@ export function runSinglePath(
                                 type: 'win', point: fastPoints + scoreAdjustment, isTenpai: true,
                                 finalShanten: -1, initialRemainingTiles: initialTotalForSummary,
                                 totalAgariTurnSum: currentTurn, agariCount: 1, engineLiveWallLimit: liveWallLimit,
-                                win: true, score: fastPoints, endReason: 'win'
+                                win: true, score: fastPoints, endReason: 'win', firstTenpaiTurn
                             };
                         }
                     }
@@ -1667,7 +1671,7 @@ export function runSinglePath(
                         finalShanten: -1,
                         initialRemainingTiles: initialTotalForSummary, totalAgariTurnSum: currentTurn,
                         agariCount: 1, engineLiveWallLimit: liveWallLimit,
-                        win: true, score: fastPoints, endReason: 'win'
+                        win: true, score: fastPoints, endReason: 'win', firstTenpaiTurn
                     };
                 }
             }
@@ -1756,7 +1760,7 @@ export function runSinglePath(
                         type: 'win', point: fastPoints + scoreAdjustment, isTenpai: true,
                         finalShanten: -1, initialRemainingTiles: initialTotalForSummary,
                         totalAgariTurnSum: currentTurn + pathTurnCount, agariCount: 1, engineLiveWallLimit: liveWallLimit,
-                        win: true, score: fastPoints, endReason: 'win'
+                        win: true, score: fastPoints, endReason: 'win', firstTenpaiTurn
                     };
                 }
             }
@@ -1765,6 +1769,9 @@ export function runSinglePath(
                 hand27[bestD]--;
                 depth++;
                 const currentShantenForLog = calculateShantenCached(hand27, currentMentsu.length);
+                if (currentShantenForLog === 0 && firstTenpaiTurn === -1) {
+                    firstTenpaiTurn = currentTurn + pathTurnCount;
+                }
                 if (debugTrialIndex < 5 && currentShantenForLog === 0) {
                     logVerbose("TENPAI_DETECTED", {
                         action: action.type === 'discard' ? tileToString((action as any).tile) : action.type,
@@ -1831,7 +1838,7 @@ export function runSinglePath(
             type: 'draw', point: scoreAdjustment + (isTenpaiResult ? 1000 : -1000), isTenpai: isTenpaiResult,
             finalShanten: finalShantenVal, initialRemainingTiles: initialTotalForSummary,
             totalAgariTurnSum: 0, agariCount: 0, engineLiveWallLimit: liveWallLimit,
-            win: false, score: 0, endReason
+            win: false, score: 0, endReason, firstTenpaiTurn
         };
     };
 
@@ -1966,6 +1973,8 @@ export interface Candidate {
     totalPoints: number;
     totalAgariTurnSum: number;
     agariCount: number;
+    tenpaiBy10TurnCount: number;
+    tenpaiWithin3TurnCount: number;
 }
 
 export function updateCandidateStats(candidate: Candidate, ev: number): void {

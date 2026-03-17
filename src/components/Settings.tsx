@@ -5,15 +5,12 @@ type Props = {
     onMyKitaChange: (val: number) => void;
     otherKita: number;
     onOtherKitaChange: (val: number) => void;
-    validationMode: boolean;
-    onValidationModeChange: (v: boolean) => void;
 };
 
 export function Settings({
     currentTurn, onTurnChange,
     myKita, onMyKitaChange,
-    otherKita, onOtherKitaChange,
-    validationMode, onValidationModeChange
+    otherKita, onOtherKitaChange
 }: Props) {
     return (
         <div className="space-y-4 p-4 bg-gray-50 rounded-lg shadow-inner">
@@ -60,21 +57,6 @@ export function Settings({
                 </div>
 
                 {/* Dealer/Parent Removed */}
-
-                {/* Validation Mode */}
-                <div className="col-span-2 mt-2 pt-4 border-t border-gray-200">
-                    <label className="inline-flex items-center">
-                        <input
-                            type="checkbox"
-                            checked={validationMode}
-                            onChange={(e) => onValidationModeChange(e.target.checked)}
-                            className="h-4 w-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
-                        />
-                        <span className="ml-2 text-sm font-medium text-gray-900">
-                            検証モード (全候補5000回試行 + CSV出力)
-                        </span>
-                    </label>
-                </div>
             </div>
         </div>
     );
