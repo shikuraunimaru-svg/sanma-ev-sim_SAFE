@@ -25,8 +25,6 @@ export default function App() {
   const [currentTurn, setCurrentTurn] = useState(1);
   const [myKita, setMyKita] = useState(0);
   const [otherKita, setOtherKita] = useState(0);
-  const [validationMode, setValidationMode] = useState(false);
-  const [csvReport, setCsvReport] = useState<string | undefined>(undefined);
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [results, setResults] = useState<DiscardResult[]>([]);
@@ -60,7 +58,9 @@ export default function App() {
 
     worker.onmessage = (e: MessageEvent) => {
       logVerbose("Main thread received:", e.data);
-      const { type, results: data, winResult: winData, summary, csvReport: report } = e.data;
+
+      const { type, results: data, winResult: winData, summary } = e.data;
+
       if (type === 'RESULT' && data) {
         logVerbose("RESULT_ACTIONS_START");
         data.forEach((r: any, i: number) => {
@@ -81,14 +81,12 @@ export default function App() {
           logImportant(`Simulation time: ${summary.totalTimeMs.toFixed(2)} ms`);
         }
         setSimulationSummary(summary);
-        setCsvReport(report);
         setWinResult(null);
         setIsSimulating(false);
       } else if (type === 'WIN' && winData) {
         setWinResult(winData);
         setSimulationSummary(summary);
         setResults([]);
-        setCsvReport(undefined);
         setIsSimulating(false);
       } else if (type === 'PROGRESS') {
         // Optional: handle progress updates if passed
@@ -147,8 +145,6 @@ export default function App() {
     setIsSimulating(true);
     setResults([]);
     setWinResult(null);
-    setCsvReport(undefined);
-    setCsvReport(undefined);
 
     // Calculate selfEffectiveWallCount for config
     const myKanCount = fixedMentsu.filter(m => m.isKan || m.type === 'kantsu').length;
@@ -182,7 +178,6 @@ export default function App() {
       selfEffectiveWallCount,
       liveWallLimit, // Add this
       myKanCount,
-      validationMode,
     };
 
     // Check if hand is already winning
@@ -206,14 +201,14 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto space-y-6">
         <header className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">🀄 三人麻雀・何切るEVシミュレーター</h1>
-          <p className="mt-2 text-gray-600">手牌を入力し、モンテカルロ法で最適な打牌を算出します（門前攻撃特化）。</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">🀄 三人麻雀・何切るEVシミュレーター</h1>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">手牌を入力し、モンテカルロ法で最適な打牌を算出します（門前攻撃特化）。</p>
         </header>
 
-        <section className="bg-white p-6 rounded-lg shadow">
+        <section className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border border-gray-100 dark:border-gray-700">
           <HandInput
             hand={hand}
             onChange={setHand}
@@ -224,7 +219,7 @@ export default function App() {
           />
         </section>
 
-        <section className="bg-white p-6 rounded-lg shadow">
+        <section className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border border-gray-100 dark:border-gray-700">
           <Settings
             currentTurn={currentTurn}
             onTurnChange={setCurrentTurn}
@@ -249,8 +244,8 @@ export default function App() {
         </div>
 
         {(results.length > 0 || winResult) && (
-          <section className="bg-white p-6 rounded-lg shadow transition-opacity duration-500 ease-in-out">
-            <h2 className="text-xl font-bold mb-4">解析結果</h2>
+          <section className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border border-gray-100 dark:border-gray-700 transition-opacity duration-500 ease-in-out">
+            <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-gray-100">解析結果</h2>
 
             <ResultHeader
               hand={hand}
@@ -263,20 +258,20 @@ export default function App() {
             />
 
             {winResult ? (
-              <div className="bg-yellow-50 border-2 border-yellow-200 p-6 rounded-lg">
+              <div className="bg-yellow-50 dark:bg-yellow-900/30 border-2 border-yellow-200 dark:border-yellow-700/50 p-6 rounded-lg">
                 <div className="flex items-center gap-2 mb-4">
                   <span className="text-2xl">🎉</span>
-                  <h3 className="text-xl font-bold text-yellow-800">和了しています！</h3>
+                  <h3 className="text-xl font-bold text-yellow-800 dark:text-yellow-400">和了しています！</h3>
                 </div>
 
                 {/* Winning Hand Visualization */}
-                <div className="flex flex-nowrap gap-4 items-center mb-6 overflow-x-auto p-4 bg-white/50 rounded-lg border border-yellow-200">
+                <div className="flex flex-nowrap gap-4 items-center mb-6 overflow-x-auto p-4 bg-white/50 dark:bg-gray-800/50 rounded-lg border border-yellow-200 dark:border-yellow-700/50">
                   <div className="flex flex-nowrap gap-[2px]">
                     {winResult.bestStructure.head !== -1 && (
-                      <div className="flex gap-[2px] p-1 bg-white rounded border border-gray-200 shadow-sm">
+                      <div className="flex gap-[2px] p-1 bg-white dark:bg-gray-700 rounded border border-gray-200 dark:border-gray-600 shadow-sm">
                         <TileDisplay tile={winResult.bestStructure.head} size="result" />
                         <TileDisplay tile={winResult.bestStructure.head} size="result" />
-                        <div className="text-[10px] text-gray-400 self-end ml-1">雀頭</div>
+                        <div className="text-[10px] text-gray-400 dark:text-gray-500 self-end ml-1">雀頭</div>
                       </div>
                     )}
                   </div>
@@ -290,10 +285,10 @@ export default function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <h4 className="font-bold text-yellow-900 mb-2 border-b border-yellow-200 pb-1">役一覧</h4>
+                    <h4 className="font-bold text-yellow-900 dark:text-yellow-400 mb-2 border-b border-yellow-200 dark:border-yellow-700/50 pb-1">役一覧</h4>
                     <ul className="space-y-1">
                       {winResult.bestYaku.yakuList.map((y, idx) => (
-                        <li key={`${y.name}-${idx}`} className="flex justify-between text-yellow-900">
+                        <li key={`${y.name}-${idx}`} className="flex justify-between text-yellow-900 dark:text-yellow-200">
                           <span>{y.name}</span>
                           <span className="font-mono">{y.han}翻</span>
                         </li>
@@ -301,15 +296,15 @@ export default function App() {
                     </ul>
                   </div>
 
-                  <div className="flex flex-col justify-center bg-white p-4 rounded border border-yellow-100 shadow-sm">
-                    <div className="text-sm text-gray-500 mb-1">
+                  <div className="flex flex-col justify-center bg-white dark:bg-gray-800 p-4 rounded border border-yellow-100 dark:border-yellow-700/50 shadow-sm">
+                    <div className="text-sm text-gray-500 dark:text-gray-400 mb-1">
                       {winResult.bestYaku.han}翻 {winResult.bestYaku.fu}符
                     </div>
-                    <div className="text-3xl font-black text-gray-900">
+                    <div className="text-3xl font-black text-gray-900 dark:text-gray-100">
                       {winResult.bestScore.total.toLocaleString()}
-                      <span className="text-lg ml-1 font-normal text-gray-600">点</span>
+                      <span className="text-lg ml-1 font-normal text-gray-600 dark:text-gray-400">点</span>
                     </div>
-                    <div className="text-sm text-gray-600 mt-2">
+                    <div className="text-sm text-gray-600 dark:text-gray-400 mt-2">
                       {winResult.bestScore.details}
                     </div>
                   </div>

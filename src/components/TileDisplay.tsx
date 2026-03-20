@@ -29,12 +29,12 @@ export function TileDisplay({
 
     const interactiveStyle = `
         relative cursor-pointer transition-transform duration-200 
-        hover:scale-105 hover:shadow-xl w-full
+        hover:scale-105 hover:shadow-xl
         ${selected ? '-translate-y-2' : ''}
     `;
 
     const flatStyle = `
-        relative w-full
+        relative
     `;
 
     const wrapperStyle = `

@@ -7,3 +7,33 @@
     transform-origin: center center;
     transition: transform 0.2s ease;
 }
+
+/* Aboutページ用（簡易） */
+.about-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+  line-height: 1.7;
+  background: white;
+}
+
+.about-container h1 {
+  font-size: 28px;
+  font-weight: bold;
+  margin-bottom: 16px;
+}
+
+.about-container h2 {
+  font-size: 20px;
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.about-container p {
+  margin-bottom: 12px;
+}
+
+.about-container ul {
+  padding-left: 20px;
+  margin-bottom: 12px;
+}

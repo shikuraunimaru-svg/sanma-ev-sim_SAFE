@@ -24,7 +24,7 @@ export function MentsuDisplay({ mentsu, size = 'result' }: Props) {
     }
 
     return (
-        <div className={`flex gap-[2px] p-1 rounded border ${mentsu.isOpen ? 'bg-yellow-50 border-yellow-100' : 'bg-blue-50 border-blue-100'}`}>
+        <div className={`flex gap-[2px] p-1 rounded border ${mentsu.isOpen ? 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-100 dark:border-yellow-700/50' : 'bg-blue-50 dark:bg-blue-900/30 border-blue-100 dark:border-blue-700/50'}`}>
             {mentsu.tiles.map((t, idx) => {
                 let isAnkanUra = false;
                 let tileToDisplay = t;

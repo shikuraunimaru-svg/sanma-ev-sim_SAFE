@@ -169,16 +169,16 @@ export function HandInput({
     const isMaxReached = activeTab === 'hand' && totalTilesInStructure >= maxTiles;
 
     return (
-        <div className="space-y-4 p-4 bg-gray-50 rounded-lg shadow-inner">
-            <div className="flex justify-between items-end border-b border-gray-200">
+        <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-inner dark:shadow-gray-900/50">
+            <div className="flex justify-between items-end border-b border-gray-200 dark:border-gray-700">
                 <div className="flex gap-1">
                     {tabs.map(tab => (
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${activeTab === tab.id
-                                ? 'bg-white border-x border-t border-gray-200 text-blue-600'
-                                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                                ? 'bg-white dark:bg-gray-700 border-x border-t border-gray-200 dark:border-gray-600 text-blue-600 dark:text-blue-400'
+                                : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600'
                                 }`}
                         >
                             {tab.label}
@@ -189,12 +189,12 @@ export function HandInput({
             </div>
 
             {/* Display Area */}
-            <div className="bg-white p-4 rounded border border-gray-200 min-h-[120px] flex flex-col gap-4">
+            <div className="bg-white dark:bg-gray-700 p-4 rounded border border-gray-200 dark:border-gray-600 min-h-[120px] flex flex-col gap-4">
                 {/* Hand and Calls */}
-                <div className="flex flex-wrap items-end gap-4">
+                <div className="flex flex-wrap items-end gap-2">
                     {/* Concealed Hand */}
-                    <div className="flex flex-nowrap gap-[2px]">
-                        {hand.length === 0 && fixedMentsu.length === 0 && <span className="text-gray-400 italic">牌を選択してください</span>}
+                    <div className="flex flex-nowrap gap-0">
+                        {hand.length === 0 && fixedMentsu.length === 0 && <span className="text-gray-400 dark:text-gray-500 italic">牌を選択してください</span>}
                         {hand.map((t: Tile, idx: number) => (
                             <TileDisplay key={`hand-tile-${t}-${idx}`} tile={t} onClick={() => removeTile(idx)} />
                         ))}
@@ -215,8 +215,8 @@ export function HandInput({
                 </div>
 
                 {/* Dora Area */}
-                <div className="flex items-center gap-4 text-sm border-t border-gray-100 pt-2">
-                    <span className="text-gray-500">ドラ表示牌:</span>
+                <div className="flex items-center gap-4 text-sm border-t border-gray-100 dark:border-gray-600 pt-2">
+                    <span className="text-gray-500 dark:text-gray-400">ドラ表示牌:</span>
                     <div className="flex gap-1">
                         {doraIndicators.map((t: Tile, idx: number) => (
                             <TileDisplay key={`dora-tile-${t}-${idx}`} tile={t} size="dora" onClick={() => removeDora(idx)} />
