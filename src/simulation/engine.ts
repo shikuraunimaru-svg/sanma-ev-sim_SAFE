@@ -1399,7 +1399,7 @@ export function runSinglePath(
     workHand27: Int8Array,
     workUraCounts: Int8Array,
     seed: number,
-    initialShanten: number,
+    _initialShanten: number, // Lint: Unused but kept for compatibility
     tenpaiDepth: number = 0,
     debugTrialIndex: number = 9999
 ): SimulationPathResult {
@@ -1448,6 +1448,8 @@ export function runSinglePath(
             return executeAnkanPath(initialAction);
         } else if (initialAction.type === 'ankanRiichi') {
             return executeAnkanPath(initialAction);
+        } else if (initialAction.type === 'kakan') {
+            return executeKakanPath(initialAction);
         } else if (initialAction.type === 'kita') {
             return executeKitaPath();
         } else if (initialAction.type === 'tsumo') {
@@ -1466,6 +1468,10 @@ export function runSinglePath(
     };
 
     const executeAnkanPath = (action: Action & ({ type: 'ankan' } | { type: 'ankanRiichi'})): SimulationPathResult => {
+        return runSimulationLoop(action);
+    };
+
+    const executeKakanPath = (action: Action & { type: 'kakan' }): SimulationPathResult => {
         return runSimulationLoop(action);
     };
 
@@ -1504,7 +1510,8 @@ export function runSinglePath(
         let scoreAdjustment = isRiichi ? -1000 : 0;
         const currentDoraInds = [...doraIndicators];
         const currentMentsu = [...localFixedMentsuArr];
-        const wasInitialTenpai = (initialShanten === 0);
+        // initialShanten は打牌前(14枚)のシャンテン数のため、打牌後(13枚)のシャンテン数を再計算して初期テンパイ判定とする
+        const wasInitialTenpai = (calculateShantenCached(hand27, currentMentsu.length) === 0);
         let firstTenpaiTurn = wasInitialTenpai ? currentTurn : -1;
 
         const reconstructHand = (): Tile[] => {
@@ -1531,18 +1538,39 @@ export function runSinglePath(
         if (action.type === 'ankanRiichi') {
             if (DEBUG.performance && debugTrialIndex < 3) console.log("ANKAN_RIICHI_START");
         }
-        if (action.type === 'ankan' || action.type === 'ankanRiichi') {
-            if (DEBUG.performance && debugTrialIndex < 3) console.log("ANKAN_PATH_START", action.tile);
-            const sAnkan = toSanmaTile(toNormalFive(action.tile));
-            if (sAnkan !== -1 && hand27[sAnkan] >= 4) {
-                hand27[sAnkan] -= 4;
-                currentMentsu.push({
-                    type: 'kantsu' as any,
-                    tile: toNormalFive(action.tile),
-                    tiles: [toNormalFive(action.tile), toNormalFive(action.tile), toNormalFive(action.tile), toNormalFive(action.tile)],
-                    isOpen: false,
-                    isKan: true
-                } as any);
+        if (action.type === 'ankan' || action.type === 'ankanRiichi' || action.type === 'kakan') {
+            const isKakan = action.type === 'kakan';
+            if (DEBUG.performance && debugTrialIndex < 3) console.log(isKakan ? "KAKAN_PATH_START" : "ANKAN_PATH_START", (action as any).tile);
+            const actionTile = (action as any).tile;
+            const sKan = toSanmaTile(toNormalFive(actionTile));
+            if (sKan !== -1) {
+                if (isKakan) {
+                    if (hand27[sKan] >= 1) {
+                        hand27[sKan] -= 1;
+                        const ponIdx = currentMentsu.findIndex(m => m.type === 'koutsu' && m.isOpen && toNormalFive(m.tile) === toNormalFive(actionTile));
+                        if (ponIdx !== -1) {
+                            currentMentsu[ponIdx] = {
+                                ...currentMentsu[ponIdx],
+                                type: 'kantsu',
+                                tiles: [...currentMentsu[ponIdx].tiles, actionTile],
+                                isKan: true,
+                                kanType: 'added'
+                            } as any;
+                        }
+                    }
+                } else {
+                    if (hand27[sKan] >= 4) {
+                        hand27[sKan] -= 4;
+                        currentMentsu.push({
+                            type: 'kantsu' as any,
+                            tile: toNormalFive(actionTile),
+                            tiles: [toNormalFive(actionTile), toNormalFive(actionTile), toNormalFive(actionTile), toNormalFive(actionTile)],
+                            isOpen: false,
+                            isKan: true,
+                            kanType: 'ankan'
+                        } as any);
+                    }
+                }
                 if (mountainPtr < liveWallLimit) {
                     const dIdx = mountain[mountainPtr++];
                     trialCounts[dIdx]--;
@@ -1690,6 +1718,28 @@ export function runSinglePath(
                 trialCounts[typeIdx]--;
                 const tile = TILE_TYPES[typeIdx];
                 if (tile === TILES.z4) { nukidoraCount++; continue; }
+                
+                const isForcedKakanTile = tile === TILES.m1 || tile === TILES.m9 || tile >= TILES.z1;
+                if (isForcedKakanTile) {
+                    const ponIdx = currentMentsu.findIndex(m => m.type === 'koutsu' && m.isOpen && toNormalFive(m.tile) === toNormalFive(tile));
+                    if (ponIdx !== -1) {
+                        currentMentsu[ponIdx] = {
+                            ...currentMentsu[ponIdx],
+                            type: 'kantsu',
+                            tiles: [...currentMentsu[ponIdx].tiles, tile],
+                            isKan: true,
+                            kanType: 'added'
+                        } as any;
+                        if (mountainPtr < liveWallLimit) {
+                            const dIdx = mountain[mountainPtr++];
+                            trialCounts[dIdx]--;
+                            currentDoraInds.push(TILE_TYPES[dIdx]);
+                        }
+                        nukidoraCount++;
+                        continue;
+                    }
+                }
+                
                 drawn = tile;
                 break;
             }

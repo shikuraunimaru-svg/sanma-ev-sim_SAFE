@@ -791,6 +791,20 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         }
     }
 
+    // ⑤ 加槓生成 (通常加槓のみ)
+    for (const [_normalKey, tileInd] of discardMap.entries()) {
+        const tile = hand[tileInd];
+        const normalKey = toNormalFive(tile);
+        const isForcedTile = normalKey === TILES.m1 || normalKey === TILES.m9 || normalKey >= TILES.z1;
+        
+        if (!isForcedTile) {
+            const ponMentsu = config.fixedMentsu.find(m => m.type === 'koutsu' && m.isOpen && toNormalFive(m.tile) === normalKey);
+            if (ponMentsu) {
+                actions.push({ type: 'kakan', tile });
+            }
+        }
+    }
+
     if (DEBUG.actionGen) {
         console.log("ACTIONS_AFTER_GENERATION", actions.map(a => ({
             type: a.type,
@@ -809,9 +823,11 @@ export function getPossibleActions(config: SimulationConfig): Action[] {
         if (a.type === 'discard') {
             key = `discard-${toNormalFive(hand[a.tileInd])}-${a.riichi}`;
         } else if (a.type === 'ankan') {
-            key = `ankan-${toNormalFive(a.tile)}`;
+            key = `ankan-${toNormalFive(a.tile!)}`;
         } else if (a.type === 'ankanRiichi') {
-            key = `ankanRiichi-${toNormalFive(a.tile)}`;
+            key = `ankanRiichi-${toNormalFive(a.tile!)}`;
+        } else if (a.type === 'kakan') {
+            key = `kakan-${toNormalFive(a.tile!)}`;
         } else {
             key = a.type;
         }

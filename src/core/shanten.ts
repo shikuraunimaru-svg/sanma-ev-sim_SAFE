@@ -263,6 +263,7 @@ export type Mentsu = {
     tiles: Tile[];
     isOpen: boolean;
     isKan: boolean;
+    kanType?: 'added' | 'minkan' | 'ankan';
     tile: Tile; // Keep for compatibility with existing yaku logic for now
 };
 

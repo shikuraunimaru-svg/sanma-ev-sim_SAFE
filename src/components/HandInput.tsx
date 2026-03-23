@@ -152,10 +152,19 @@ export function HandInput({
     const zihai = [27, 28, 29, 30, 31, 32, 33]; // z4 is 30
 
     // Render Helper
+    const isForcedKakanDisabled = (t: Tile) => {
+        if (activeTab !== 'hand') return false;
+        const normT = toNormalFive(t);
+        const isForcedTile = normT === TILES.m1 || normT === TILES.m9 || normT >= TILES.z1;
+        if (!isForcedTile) return false;
+        // 既にポンしている場合は加槓を禁止し、自動加槓の仕様に従う
+        return fixedMentsu.some(m => m.type === 'koutsu' && m.isOpen && toNormalFive(m.tile) === normT);
+    };
+
     const renderTileButton = (t: Tile, index: number, prefix: string) => {
         const isNorth = t === TILES.z4;
         const isNorthDisabled = isNorth && activeTab !== 'dora';
-        const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat) || isNorthDisabled;
+        const disabled = isTileLimitReached(t, stat) || isRedLimitReached(t, stat) || isNorthDisabled || isForcedKakanDisabled(t);
 
         return (
             <div key={`${prefix}-${t}-${index}`} className={disabled ? "opacity-30 cursor-not-allowed pointer-events-none" : ""}>
