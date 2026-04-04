@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "mahjong-tile-efficiency": "^1.0.3",
+    "syanten": "^1.6.0"
+  }
+}

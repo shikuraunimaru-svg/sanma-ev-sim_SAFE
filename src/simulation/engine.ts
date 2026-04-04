@@ -3,7 +3,7 @@ export { TILES };
 export const toSanmaTile = toSanmaTileCore;
 export const toStandardTile = toStandardTileCore;
 import type { Tile } from '../core/tile';
-import { calculateShanten27, getAgariPatterns, getShantenBreakdown27 } from '../core/shanten';
+import { calculateShanten27, getAgariPatterns, getShantenBreakdown27, suitCacheHit, suitCacheMiss, solveSuitCallCount, suitCache, resetSuitStats } from '../core/shanten';
 export { getShantenBreakdown27 };
 import type { Mentsu, HandStructure } from '../core/shanten';
 import { calculateScore } from '../core/yaku';
@@ -17,13 +17,13 @@ export const ENABLE_STATE_CACHE = false;
 export const agariCache = new Map<string, HandStructure[]>();
 
 export function clearAgariCache() {
-    agariCache.clear();
+    // No-op to preserve cache between simulations for better performance
 }
 
 export function makeHandKey(hand: Tile[], mentsu: Mentsu[]): string {
     const h = hand.map(t => toNormalFive(t)).sort((a, b) => a - b).join(',');
     if (!mentsu || mentsu.length === 0) return h;
-    const m = mentsu.map(m => m.tiles.map(t => toNormalFive(t)).sort((a,b)=>a-b).join('-')).sort().join('|');
+    const m = mentsu.map(m => m.tiles.map(t => toNormalFive(t)).sort((a, b) => a - b).join('-')).sort().join('|');
     return `${h}|${m}`;
 }
 
@@ -218,7 +218,7 @@ export function scoreWinningHandFast(
     if (fullLen > 0) {
         let isChinroutou = true;
         for (let i = 0; i < hand.length; i++) {
-            const t = hand[i];
+            const t = toNormalFive(hand[i]);
             if (!(t === 0 || t === 8 || t === 9 || t === 17 || t === 18 || t === 26)) { isChinroutou = false; break; }
         }
         if (isChinroutou) yakumanMult++;
@@ -245,7 +245,7 @@ export function scoreWinningHandFast(
     // 字一色
     let isTsuiisou = hand.length > 0;
     for (let i = 0; i < hand.length; i++) {
-        if (hand[i] < 27) { isTsuiisou = false; break; }
+        if (toNormalFive(hand[i]) < 27) { isTsuiisou = false; break; }
     }
     if (isTsuiisou) yakumanMult++;
 
@@ -286,7 +286,7 @@ export function scoreWinningHandFast(
     // タンヤオ
     let isTanyao = hand.length > 0;
     for (let i = 0; i < hand.length; i++) {
-        const t = hand[i];
+        const t = toNormalFive(hand[i]);
         if (t === 0 || t === 8 || t === 9 || t === 17 || t === 18 || t === 26 || t >= 27) {
             isTanyao = false; break;
         }
@@ -296,7 +296,7 @@ export function scoreWinningHandFast(
     // 一色手
     let hasHonor = false; let suitBits = 0;
     for (let i = 0; i < hand.length; i++) {
-        const t = hand[i];
+        const t = toNormalFive(hand[i]);
         if (t >= 27) { hasHonor = true; }
         else if (t <= 8) suitBits |= 1;
         else if (t <= 17) suitBits |= 2;
@@ -306,19 +306,22 @@ export function scoreWinningHandFast(
     if (!hasHonor && suitCount === 1) han += isMenzen ? 6 : 5; // 清一色
     else if (hasHonor && suitCount === 1) han += isMenzen ? 3 : 2; // 混一色
 
-    if (s.head === -1) {
+    const isChiitoi = s.mentsu.length === 6 && s.mentsu.every(m => m.type === 'pair');
+
+    if (isChiitoi) {
         // 七対子
-        if (hand.length === 14) {
-            let pairs = 0;
-            // 簡易チェック: ソートされた手牌でペアを数える
-            let prev = -1; let cnt = 0;
-            for (let i = 0; i < hand.length; i++) {
-                if (hand[i] === prev) { cnt++; if (cnt === 2) { pairs++; cnt = 0; } }
-                else { prev = hand[i]; cnt = 1; }
-            }
-            if (pairs === 7) han += 2;
-        }
+        han += 2;
         // ドラ加算
+        han += state.doraCount;
+        han += state.uraDoraCount;
+        han += state.kitaCount;
+        if (han <= 0) return { score: 0, han: 0, fu: 0, pinfu: false }; // 役なし
+        const fu = 25;
+        return { score: calcPointsFast(han, fu, false, 1, state.isDealer ?? true), han, fu, pinfu: false };
+    }
+
+    if (s.head === -1) {
+        // 国士など、その他の特殊形
         han += state.doraCount;
         han += state.uraDoraCount;
         han += state.kitaCount;
@@ -642,7 +645,7 @@ export type SimulationPathResult = {
     totalAgariTurnSum: number;
     agariCount: number;
     engineLiveWallLimit: number;
-        win?: boolean;
+    win?: boolean;
     score?: number;
     endReason?: string;
     firstTenpaiTurn?: number;
@@ -711,10 +714,10 @@ export function logPerformanceStats() {
     const hitRate = totalCache > 0 ? ((cacheHits / totalCache) * 100).toFixed(1) : "0.0";
 
     logImportant("---- Simulation End Reasons ----");
-    logImportant("win:", DEBUG_SIM_STATS.win);
-    logImportant("ryukyoku:", DEBUG_SIM_STATS.ryukyoku);
-    logImportant("tenpaiStop:", DEBUG_SIM_STATS.tenpaiStop);
-    logImportant("wallExhaust:", DEBUG_SIM_STATS.wallExhaust);
+    logImportant("win:", simStats.win);
+    logImportant("ryukyoku:", simStats.ryukyoku);
+    logImportant("tenpaiStop:", simStats.tenpaiStop);
+    logImportant("wallExhaust:", simStats.wallExhaust);
     logImportant("--------------------------------");
 
     logImportant("--- Performance Stats ---");
@@ -736,9 +739,17 @@ export function logPerformanceStats() {
     const shantenTotal = shantenCacheHits + shantenCacheMisses;
     const shantenRate = shantenTotal > 0 ? (shantenCacheHits / shantenTotal) * 100 : 0;
     logImportant(`shantenCacheHitRate: ${shantenRate.toFixed(1)} %`);
-    logImportant("");
-    logImportant(`calculateShanten calls: ${shantenCalls}`);
     logImportant(`calculateShanten totalTime: ${shantenTotalTime.toFixed(2)} ms`);
+    logImportant("");
+    
+    // --- Phase 2 Suit Cache Stats ---
+    const totalSuitCache = suitCacheHit + suitCacheMiss;
+    const suitHitRate = totalSuitCache > 0 ? (suitCacheHit / totalSuitCache) * 100 : 0;
+    logImportant(`suitCache size: ${suitCache.size}`);
+    logImportant(`suitCacheHits: ${suitCacheHit}`);
+    logImportant(`suitCacheMisses: ${suitCacheMiss}`);
+    logImportant(`suitCacheHitRate: ${suitHitRate.toFixed(1)} %`);
+    logImportant(`solveSuitCallCount: ${solveSuitCallCount}`);
     logImportant("");
     logImportant(`getAgariPatterns calls: ${agariCalls}`);
     logImportant(`getAgariPatterns totalTime: ${agariTotalTime.toFixed(2)} ms`);
@@ -750,16 +761,25 @@ export function logPerformanceStats() {
 }
 
 export function resetPerformanceStats() {
+    console.log("RESET_PERF_STATS CALLED");
     cacheHits = 0;
     cacheMisses = 0;
     shantenCacheHits = 0;
     shantenCacheMisses = 0;
     shantenCalls = 0;
     shantenTotalTime = 0;
+    shantenHit = 0;    // Reset local memoization stats
+    shantenMiss = 0;
     agariCalls = 0;
     agariTotalTime = 0;
     scoreFastCalls = 0;
     scoreFastTotalTime = 0;
+    resetSuitStats();  // Core/shanten stats
+
+    simStats.win = 0;
+    simStats.ryukyoku = 0;
+    simStats.tenpaiStop = 0;
+    simStats.wallExhaust = 0;
 }
 
 export function resetDebugCounters() {
@@ -784,12 +804,12 @@ export function initWallPool(template: Uint8Array) {
     reverseWallPool.length = 0;
     swappedWallPool.length = 0;
     swappedReverseWallPool.length = 0;
-    
+
     for (let i = 0; i < WALL_POOL_SIZE; i++) {
         const w = new Uint8Array(template);
         shuffleInPlace(w, w.length);
         wallPool.push(w);
-        
+
         // Antithetic Sampling 用に反転させた壁も事前生成しておく
         const rw = new Uint8Array(w).reverse();
         reverseWallPool.push(rw);
@@ -819,13 +839,13 @@ let shantenHit = 0;
 let shantenMiss = 0;
 
 export function initShantenCache() {
-    shantenCacheLocal = new Map();
-    shantenHit = 0;
-    shantenMiss = 0;
+    if (!shantenCacheLocal) {
+        shantenCacheLocal = new Map();
+    }
 }
 
 export function clearShantenCache() {
-    shantenCacheLocal = null;
+    // No-op to preserve cache between simulations for better performance
 }
 
 export function getShantenCacheStats() {
@@ -1281,7 +1301,7 @@ export function findBestDiscard27(
     // 追加の安全策: 有効な candidate のみをフィルタ
     const validCandidates = candidates.filter(c => c !== undefined && c.tile !== undefined);
     if (validCandidates.length === 0) return -1;
-    
+
     if (r < EPSILON) {
         // トップ K 個からランダム選択
         const k = Math.min(TOP_K, validCandidates.length);
@@ -1322,9 +1342,27 @@ export function getUkeireInfo27(
 ): { typeCount: number; tileCount: number } {
     let typeCount = 0;
     let tileCount = 0;
-    const currentShanten = getShantenMemoized(hand27 as any, fixedMentsuCount);
+    let currentShanten = getShantenMemoized(hand27 as any, fixedMentsuCount);
 
     if (currentShanten === -1) return { typeCount: 0, tileCount: 0 };
+
+    // テンパイ（0シャンテン）時の特別処理
+    // 和了牌が1枚も存在しない場合、実質的に和了不可能な「空テン」状態であるため
+    // テンパイから除外（1シャンテンとして扱う）
+    let isRealTenpai = false;
+    if (currentShanten === 0) {
+        for (let i = 0; i < 27; i++) {
+            hand27[i]++;
+            if (calculateShantenCached(hand27 as any, fixedMentsuCount) === -1) {
+                isRealTenpai = true;
+            }
+            hand27[i]--;
+            if (isRealTenpai) break;
+        }
+        if (!isRealTenpai) {
+            currentShanten = 1; // 空テン除外
+        }
+    }
 
     // We only check tiles 0-26 (Sanma tiles)
     for (let t = 0; t < 27; t++) {
@@ -1332,8 +1370,23 @@ export function getUkeireInfo27(
         if (count <= 0) continue;
 
         hand27[t]++;
-        const nextShanten = calculateShantenCached(hand27, fixedMentsuCount);
-        if (nextShanten < currentShanten) {
+        const nextShanten = calculateShantenCached(hand27 as any, fixedMentsuCount);
+        
+        let isUkeire = false;
+
+        if (currentShanten === 0) {
+            // ② テンパイ時: その牌で実際に和了(-1シャンテン)できる場合のみ有効牌
+            if (nextShanten === -1) {
+                isUkeire = true;
+            }
+        } else {
+            // ① 非テンパイ時: シャンテン数が小さくなる場合
+            if (nextShanten < currentShanten) {
+                isUkeire = true;
+            }
+        }
+
+        if (isUkeire) {
             typeCount++;
             tileCount += count;
         }
@@ -1374,7 +1427,7 @@ export function buildStateKey(
     return key;
 }
 
-export const DEBUG_SIM_STATS = {
+export const simStats = {
     win: 0,
     ryukyoku: 0,
     tenpaiStop: 0,
@@ -1436,12 +1489,12 @@ export function runSinglePath(
     const executePath = (): SimulationPathResult => {
         if (DEBUG.performance && debugTrialIndex < 3) {
             logDebug("ACTION_TYPE", initialAction.type);
-            logDebug("EXECUTE_PATH_CALLED", { 
+            logDebug("EXECUTE_PATH_CALLED", {
                 actionType: initialAction.type,
                 tile: (initialAction as any).tile ? tileToString((initialAction as any).tile) : 'none'
             });
         }
-        
+
         if (initialAction.type === 'discard') {
             return executeDiscardPath(initialAction);
         } else if (initialAction.type === 'ankan') {
@@ -1455,7 +1508,7 @@ export function runSinglePath(
         } else if (initialAction.type === 'tsumo') {
             return executeTsumoPath();
         }
-        
+
         return {
             type: 'draw', point: 0, isTenpai: false, finalShanten: 99,
             initialRemainingTiles: liveWallLimit, totalAgariTurnSum: 0, agariCount: 0,
@@ -1467,7 +1520,7 @@ export function runSinglePath(
         return runSimulationLoop(action);
     };
 
-    const executeAnkanPath = (action: Action & ({ type: 'ankan' } | { type: 'ankanRiichi'})): SimulationPathResult => {
+    const executeAnkanPath = (action: Action & ({ type: 'ankan' } | { type: 'ankanRiichi' })): SimulationPathResult => {
         return runSimulationLoop(action);
     };
 
@@ -1718,7 +1771,7 @@ export function runSinglePath(
                 trialCounts[typeIdx]--;
                 const tile = TILE_TYPES[typeIdx];
                 if (tile === TILES.z4) { nukidoraCount++; continue; }
-                
+
                 const isForcedKakanTile = tile === TILES.m1 || tile === TILES.m9 || tile >= TILES.z1;
                 if (isForcedKakanTile) {
                     const ponIdx = currentMentsu.findIndex(m => m.type === 'koutsu' && m.isOpen && toNormalFive(m.tile) === toNormalFive(tile));
@@ -1739,17 +1792,17 @@ export function runSinglePath(
                         continue;
                     }
                 }
-                
+
                 drawn = tile;
                 break;
             }
             const prevShanten = calculateShantenCached(hand27, currentMentsu.length);
-            
+
             if (isRiichi && DEBUG.performance && debugTrialIndex < 3) logVerbose("RIICHI_DRAW");
-            
+
             const sDrawn = toSanmaTile(toNormalFive(drawn as Tile));
             if (sDrawn !== -1) hand27[sDrawn]++;
-            
+
             const preDrawShanten = calculateShantenCached(hand27, currentMentsu.length);
             if (debugTrialIndex < 5 && prevShanten !== preDrawShanten) {
                 logVerbose("SHANTEN_TRANSITION", {
@@ -1870,7 +1923,7 @@ export function runSinglePath(
         }
         const finalShantenVal = calculateShantenCached(hand27, currentMentsu.length);
         const isTenpaiResult = finalShantenVal <= 0;
-        
+
         let endReason = 'ryukyoku';
         const finalTilesLeft = Math.floor(Math.max(0, liveWallLimit - mountainPtr) / 3);
         if (mountainPtr >= liveWallLimit) {
@@ -1899,13 +1952,13 @@ export function runSinglePath(
     }
 
     if (result.endReason === 'win') {
-        DEBUG_SIM_STATS.win++;
+        simStats.win++;
     } else if (result.endReason === 'wallExhaust') {
-        DEBUG_SIM_STATS.wallExhaust++;
+        simStats.wallExhaust++;
     } else if (result.endReason === 'tenpaiStop') {
-        DEBUG_SIM_STATS.tenpaiStop++;
+        simStats.tenpaiStop++;
     } else {
-        DEBUG_SIM_STATS.ryukyoku++;
+        simStats.ryukyoku++;
     }
 
     return result;

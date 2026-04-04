@@ -1,0 +1,966 @@
+{
+  "objects": [
+    {
+      "downloads": {
+        "monthly": 401,
+        "weekly": 102
+      },
+      "dependents": 0,
+      "updated": "2026-04-01T02:36:22.940Z",
+      "searchScore": 50.033207,
+      "package": {
+        "name": "@hakatashi/riichi-core",
+        "keywords": [
+          "Mahjong",
+          "Riichi",
+          "Game"
+        ],
+        "version": "1.0.4",
+        "description": "Riichi Mahjong game engine",
+        "sanitized_name": "@hakatashi/riichi-core",
+        "publisher": {
+          "email": "hakatasiloving@gmail.com",
+          "username": "hakatashi"
+        },
+        "maintainers": [
+          {
+            "email": "hakatasiloving@gmail.com",
+            "username": "hakatashi"
+          }
+        ],
+        "license": "GPL-3.0",
+        "date": "2019-08-04T03:11:22.915Z",
+        "links": {
+          "homepage": "https://github.com/summivox/riichi-core#readme",
+          "repository": "git+https://github.com/summivox/riichi-core.git",
+          "bugs": "https://github.com/summivox/riichi-core/issues",
+          "npm": "https://www.npmjs.com/package/@hakatashi/riichi-core"
+        }
+      },
+      "score": {
+        "final": 50.033207,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 109,
+        "weekly": 95
+      },
+      "dependents": 0,
+      "updated": "2026-03-25T03:51:27.893Z",
+      "searchScore": 49.54894,
+      "package": {
+        "name": "mahjong-tile-efficiency",
+        "keywords": [
+          "Mahjong",
+          "Tile Efficiency",
+          "Riichi",
+          "MCR",
+          "Zung Jung",
+          "Shanten",
+          "Ukeire"
+        ],
+        "version": "1.0.3",
+        "description": "Tile efficiency calculation for several Mahjong variants",
+        "sanitized_name": "mahjong-tile-efficiency",
+        "publisher": {
+          "email": "garyleung142857@gmail.com",
+          "username": "garyleung142857"
+        },
+        "maintainers": [
+          {
+            "email": "garyleung142857@gmail.com",
+            "username": "garyleung142857"
+          }
+        ],
+        "license": "MIT",
+        "date": "2023-05-01T11:46:54.991Z",
+        "links": {
+          "homepage": "https://github.com/garyleung142857/mahjong-tile-efficiency#readme",
+          "repository": "git+https://github.com/garyleung142857/mahjong-tile-efficiency.git",
+          "bugs": "https://github.com/garyleung142857/mahjong-tile-efficiency/issues",
+          "npm": "https://www.npmjs.com/package/mahjong-tile-efficiency"
+        }
+      },
+      "score": {
+        "final": 49.54894,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 304,
+        "weekly": 114
+      },
+      "dependents": "0",
+      "updated": "2026-03-27T21:06:08.020Z",
+      "searchScore": 47.490227,
+      "package": {
+        "name": "@hieuzest/koishi-plugin-mahjong",
+        "keywords": [
+          "chatbot",
+          "koishi",
+          "plugin"
+        ],
+        "version": "3.1.0",
+        "description": "Service for mahjong backend",
+        "sanitized_name": "@hieuzest/koishi-plugin-mahjong",
+        "publisher": {
+          "email": "girkirin@hotmail.com",
+          "username": "hieuzest"
+        },
+        "maintainers": [
+          {
+            "email": "girkirin@hotmail.com",
+            "username": "hieuzest"
+          }
+        ],
+        "license": "MIT",
+        "date": "2025-11-21T19:35:05.682Z",
+        "links": {
+          "npm": "https://www.npmjs.com/package/@hieuzest/koishi-plugin-mahjong"
+        }
+      },
+      "score": {
+        "final": 47.490227,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 564,
+        "weekly": 220
+      },
+      "dependents": "2",
+      "updated": "2026-03-31T12:26:15.953Z",
+      "searchScore": 42.736588,
+      "package": {
+        "name": "syanten",
+        "keywords": [
+          "riichi",
+          "mahjong",
+          "syanten",
+          "shanten",
+          "agari"
+        ],
+        "version": "1.6.0",
+        "description": "Japanese riichi mahjong hand shanten calculation",
+        "sanitized_name": "syanten",
+        "publisher": {
+          "email": "takayama@foxmail.com",
+          "username": "takayama"
+        },
+        "maintainers": [
+          {
+            "email": "takayama@foxmail.com",
+            "username": "takayama"
+          }
+        ],
+        "license": "MIT",
+        "date": "2023-03-22T10:56:06.279Z",
+        "links": {
+          "homepage": "https://github.com/takayama-lily/syanten#readme",
+          "repository": "git+https://github.com/takayama-lily/syanten.git",
+          "bugs": "https://github.com/takayama-lily/syanten/issues",
+          "npm": "https://www.npmjs.com/package/syanten"
+        }
+      },
+      "score": {
+        "final": 42.736588,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 156,
+        "weekly": 5
+      },
+      "dependents": "1",
+      "updated": "2026-03-29T21:06:07.142Z",
+      "searchScore": 42.196064,
+      "package": {
+        "name": "@pai-forge/riichi-mahjong",
+        "keywords": [
+          "mahjong",
+          "riichi",
+          "game"
+        ],
+        "version": "0.3.6",
+        "description": "Riichi Mahjong Logic Library",
+        "sanitized_name": "@pai-forge/riichi-mahjong",
+        "publisher": {
+          "email": "okishimaxyz@gmail.com",
+          "username": "k0kishima"
+        },
+        "maintainers": [
+          {
+            "email": "okishimaxyz@gmail.com",
+            "username": "k0kishima"
+          }
+        ],
+        "license": "ISC",
+        "date": "2026-03-01T20:45:25.719Z",
+        "links": {
+          "homepage": "https://github.com/PaiForge/riichi-mahjong#readme",
+          "repository": "git+https://github.com/PaiForge/riichi-mahjong.git",
+          "bugs": "https://github.com/PaiForge/riichi-mahjong/issues",
+          "npm": "https://www.npmjs.com/package/@pai-forge/riichi-mahjong"
+        }
+      },
+      "score": {
+        "final": 42.196064,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 229,
+        "weekly": 1
+      },
+      "dependents": 0,
+      "updated": "2026-03-31T21:16:39.920Z",
+      "searchScore": 41.881817,
+      "package": {
+        "name": "@llmletsplay/versus-mahjong",
+        "keywords": [],
+        "version": "0.1.1",
+        "description": "Standalone Versus mahjong engine package",
+        "sanitized_name": "@llmletsplay/versus-mahjong",
+        "publisher": {
+          "email": "thomasjvu@gmail.com",
+          "username": "thomasjvu"
+        },
+        "maintainers": [
+          {
+            "email": "thomasjvu@gmail.com",
+            "username": "thomasjvu"
+          }
+        ],
+        "license": "MIT",
+        "date": "2026-03-10T12:59:23.858Z",
+        "links": {
+          "homepage": "https://github.com/llmletsplay/versus#readme",
+          "repository": "git+https://github.com/llmletsplay/versus.git",
+          "bugs": "https://github.com/llmletsplay/versus/issues",
+          "npm": "https://www.npmjs.com/package/@llmletsplay/versus-mahjong"
+        }
+      },
+      "score": {
+        "final": 41.881817,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 101,
+        "weekly": 26
+      },
+      "dependents": 0,
+      "updated": "2026-03-28T14:56:11.594Z",
+      "searchScore": 40.77132,
+      "package": {
+        "name": "riichi-mahjong-tiles",
+        "keywords": [
+          "mahjong",
+          "riichi",
+          "game"
+        ],
+        "version": "0.1.0",
+        "description": "Riichi mahjong tiles as React SVG components with regular and black variants including rotated versions",
+        "sanitized_name": "riichi-mahjong-tiles",
+        "publisher": {
+          "email": "tt3.sakai@gmail.com",
+          "username": "sakaitaka23"
+        },
+        "maintainers": [
+          {
+            "email": "tt3.sakai@gmail.com",
+            "username": "sakaitaka23"
+          }
+        ],
+        "license": "MIT",
+        "date": "2025-08-23T12:21:28.247Z",
+        "links": {
+          "homepage": "https://github.com/SakaiTaka23/riichi-mahjong-tiles",
+          "repository": "git+https://github.com/SakaiTaka23/riichi-mahjong-tiles.git",
+          "bugs": "https://github.com/SakaiTaka23/riichi-mahjong-tiles/issues",
+          "npm": "https://www.npmjs.com/package/riichi-mahjong-tiles"
+        }
+      },
+      "score": {
+        "final": 40.77132,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 122,
+        "weekly": 8
+      },
+      "dependents": 0,
+      "updated": "2026-03-27T05:31:11.259Z",
+      "searchScore": 33.84013,
+      "package": {
+        "name": "riichi-mahjong",
+        "keywords": [
+          "mahjong",
+          "riichi",
+          "yaku",
+          "scoring",
+          "miniprogram"
+        ],
+        "version": "1.0.6",
+        "description": "针对微信小程序优化的日本麻将（日麻）计算引擎，支持牌型识别、役种和点数计算，适用于小程序和 Node.js 项目。",
+        "sanitized_name": "riichi-mahjong",
+        "publisher": {
+          "email": "mikisakura@163.com",
+          "username": "ethan_2hang"
+        },
+        "maintainers": [
+          {
+            "email": "mikisakura@163.com",
+            "username": "ethan_2hang"
+          }
+        ],
+        "license": "ISC",
+        "date": "2026-02-27T05:13:33.984Z",
+        "links": {
+          "npm": "https://www.npmjs.com/package/riichi-mahjong"
+        }
+      },
+      "score": {
+        "final": 33.84013,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 254,
+        "weekly": 77
+      },
+      "dependents": 0,
+      "updated": "2026-03-26T00:26:28.747Z",
+      "searchScore": 30.456097,
+      "package": {
+        "name": "@hieuzest/koishi-plugin-majsoul-launcher",
+        "keywords": [
+          "chatbot",
+          "koishi",
+          "plugin"
+        ],
+        "version": "1.2.3",
+        "description": "[![npm](https://img.shields.io/npm/v/@hieuzest/koishi-plugin-majsoul-launcher?style=flat-square)](https://www.npmjs.com/package/@hieuzest/koishi-plugin-majsoul-launcher)",
+        "sanitized_name": "@hieuzest/koishi-plugin-majsoul-launcher",
+        "publisher": {
+          "email": "girkirin@hotmail.com",
+          "username": "hieuzest"
+        },
+        "maintainers": [
+          {
+            "email": "girkirin@hotmail.com",
+            "username": "hieuzest"
+          }
+        ],
+        "license": "MIT",
+        "date": "2023-09-16T08:49:59.502Z",
+        "links": {
+          "npm": "https://www.npmjs.com/package/@hieuzest/koishi-plugin-majsoul-launcher"
+        }
+      },
+      "score": {
+        "final": 30.456097,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 78,
+        "weekly": 11
+      },
+      "dependents": "2",
+      "updated": "2026-03-30T20:26:22.577Z",
+      "searchScore": 29.16119,
+      "package": {
+        "name": "emoji-mahjong",
+        "keywords": [],
+        "version": "1.3.0",
+        "description": "returns the mahjong emoji",
+        "sanitized_name": "emoji-mahjong",
+        "publisher": {
+          "email": "josh@trtr.co",
+          "username": "joshhunt"
+        },
+        "maintainers": [
+          {
+            "email": "josh@trtr.co",
+            "username": "joshhunt"
+          }
+        ],
+        "license": "ISC",
+        "date": "2017-06-08T04:19:40.489Z",
+        "links": {
+          "npm": "https://www.npmjs.com/package/emoji-mahjong"
+        }
+      },
+      "score": {
+        "final": 29.16119,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 31,
+        "weekly": 8
+      },
+      "dependents": 0,
+      "updated": "2026-03-25T09:01:19.360Z",
+      "searchScore": 28.536386,
+      "package": {
+        "name": "hk-mahjong",
+        "keywords": [
+          "mahjong"
+        ],
+        "version": "3.2.0",
+        "description": "hk-mahjong is the Node.js library that implements the scoring rules of Hong Kong Mahjong.",
+        "sanitized_name": "hk-mahjong",
+        "publisher": {
+          "email": "peterh.tech@gmail.com",
+          "username": "peterh.tech"
+        },
+        "maintainers": [
+          {
+            "email": "peterh.tech@gmail.com",
+            "username": "peterh.tech"
+          }
+        ],
+        "license": "MIT",
+        "date": "2023-03-16T09:41:51.176Z",
+        "links": {
+          "homepage": "https://github.com/HSKPeter/hk-mahjong-hand-calculation#readme",
+          "repository": "git+https://github.com/HSKPeter/hk-mahjong-hand-calculation.git",
+          "bugs": "https://github.com/HSKPeter/hk-mahjong-hand-calculation/issues",
+          "npm": "https://www.npmjs.com/package/hk-mahjong"
+        }
+      },
+      "score": {
+        "final": 28.536386,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 32,
+        "weekly": 15
+      },
+      "dependents": 0,
+      "updated": "2026-03-25T09:06:14.616Z",
+      "searchScore": 23.8151,
+      "package": {
+        "name": "riichi-core",
+        "keywords": [
+          "Mahjong",
+          "Riichi",
+          "Game"
+        ],
+        "version": "1.0.2",
+        "description": "Riichi Mahjong game engine",
+        "sanitized_name": "riichi-core",
+        "publisher": {
+          "email": "summivox@gmail.com",
+          "username": "summivox"
+        },
+        "maintainers": [
+          {
+            "email": "summivox@gmail.com",
+            "username": "summivox"
+          }
+        ],
+        "license": "GPL-3.0",
+        "date": "2016-06-16T18:11:07.303Z",
+        "links": {
+          "homepage": "https://github.com/summivox/riichi-core#readme",
+          "repository": "git+https://github.com/summivox/riichi-core.git",
+          "bugs": "https://github.com/summivox/riichi-core/issues",
+          "npm": "https://www.npmjs.com/package/riichi-core"
+        }
+      },
+      "score": {
+        "final": 23.8151,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 4843,
+        "weekly": 1142
+      },
+      "dependents": "5",
+      "updated": "2026-03-27T10:31:09.018Z",
+      "searchScore": 23.698702,
+      "package": {
+        "name": "emojis-keywords",
+        "keywords": [
+          "emoji",
+          "keywords",
+          "shortcuts"
+        ],
+        "version": "2.0.0",
+        "description": "Complete list of a emojis shortcuts.",
+        "sanitized_name": "emojis-keywords",
+        "publisher": {
+          "email": "josefrancisco.verdu@gmail.com",
+          "username": "kikobeats"
+        },
+        "maintainers": [
+          {
+            "email": "josefrancisco.verdu@gmail.com",
+            "username": "kikobeats"
+          }
+        ],
+        "license": "MIT",
+        "date": "2016-10-03T14:05:18.196Z",
+        "links": {
+          "homepage": "https://github.com/Kikobeats/emojis-keywords",
+          "repository": "git+https://github.com/kikobeats/emojis-keywords.git",
+          "bugs": "https://github.com/Kikobeats/emojis-keywords/issues",
+          "npm": "https://www.npmjs.com/package/emojis-keywords"
+        }
+      },
+      "score": {
+        "final": 23.698702,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 19,
+        "weekly": 8
+      },
+      "dependents": 0,
+      "updated": "2026-03-30T20:31:27.088Z",
+      "searchScore": 22.355726,
+      "package": {
+        "name": "mahjong-scoring",
+        "keywords": [],
+        "version": "0.2.1",
+        "sanitized_name": "mahjong-scoring",
+        "publisher": {
+          "email": "xuanyan@xuanyan.ws",
+          "username": "xuanyan"
+        },
+        "maintainers": [
+          {
+            "email": "xuanyan@xuanyan.ws",
+            "username": "xuanyan"
+          }
+        ],
+        "license": "MIT",
+        "date": "2018-11-06T09:41:37.245Z",
+        "links": {
+          "homepage": "https://github.com/xuanyan0x7c7/mahjong-scoring#readme",
+          "repository": "git+https://github.com/xuanyan0x7c7/mahjong-scoring.git",
+          "bugs": "https://github.com/xuanyan0x7c7/mahjong-scoring/issues",
+          "npm": "https://www.npmjs.com/package/mahjong-scoring"
+        }
+      },
+      "score": {
+        "final": 22.355726,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 23,
+        "weekly": 13
+      },
+      "dependents": 0,
+      "updated": "2026-03-31T04:51:26.590Z",
+      "searchScore": 21.71069,
+      "package": {
+        "name": "hubot-mahjong",
+        "keywords": [
+          "hubot",
+          "mahjong"
+        ],
+        "version": "0.0.4",
+        "description": "Hubot script for mahjong. Calc points, Record game.",
+        "sanitized_name": "hubot-mahjong",
+        "publisher": {
+          "email": "zeero26@gmail.com",
+          "username": "zeero"
+        },
+        "maintainers": [
+          {
+            "email": "zeero26@gmail.com",
+            "username": "zeero"
+          }
+        ],
+        "license": "MIT",
+        "date": "2017-02-15T14:33:09.537Z",
+        "links": {
+          "homepage": "https://github.com/zeero/hubot-mahjong#readme",
+          "repository": "git+https://github.com/zeero/hubot-mahjong.git",
+          "bugs": "https://github.com/zeero/hubot-mahjong/issues",
+          "npm": "https://www.npmjs.com/package/hubot-mahjong"
+        }
+      },
+      "score": {
+        "final": 21.71069,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 38,
+        "weekly": 8
+      },
+      "dependents": 0,
+      "updated": "2026-03-30T10:41:09.605Z",
+      "searchScore": 20.93646,
+      "package": {
+        "name": "mjai-ts",
+        "keywords": [
+          "mahjong",
+          "riichi",
+          "game"
+        ],
+        "version": "0.1.9",
+        "description": "TypeScript library for parsing and managing mjai format mahjong game logs with core game state management",
+        "sanitized_name": "mjai-ts",
+        "publisher": {
+          "email": "tt3.sakai@gmail.com",
+          "username": "sakaitaka23"
+        },
+        "maintainers": [
+          {
+            "email": "tt3.sakai@gmail.com",
+            "username": "sakaitaka23"
+          }
+        ],
+        "license": "MIT",
+        "date": "2025-12-01T09:18:10.836Z",
+        "links": {
+          "homepage": "https://github.com/SakaiTaka23/mjai-ts",
+          "repository": "git+https://github.com/SakaiTaka23/mjai-ts.git",
+          "bugs": "https://github.com/SakaiTaka23/mjai-ts/issues",
+          "npm": "https://www.npmjs.com/package/mjai-ts"
+        }
+      },
+      "score": {
+        "final": 20.93646,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 351,
+        "weekly": 124
+      },
+      "dependents": "1",
+      "updated": "2026-03-25T21:21:15.264Z",
+      "searchScore": 20.614014,
+      "package": {
+        "name": "agari",
+        "keywords": [
+          "riichi",
+          "mahjong",
+          "agari"
+        ],
+        "version": "1.1.0",
+        "description": "Japanese riichi mahjong agari calculation",
+        "sanitized_name": "agari",
+        "publisher": {
+          "email": "takayama@foxmail.com",
+          "username": "takayama"
+        },
+        "maintainers": [
+          {
+            "email": "takayama@foxmail.com",
+            "username": "takayama"
+          }
+        ],
+        "license": "MIT",
+        "date": "2020-12-24T09:04:12.016Z",
+        "links": {
+          "homepage": "https://github.com/takayama-lily/agari#readme",
+          "repository": "git+https://github.com/takayama-lily/agari.git",
+          "bugs": "https://github.com/takayama-lily/agari/issues",
+          "npm": "https://www.npmjs.com/package/agari"
+        }
+      },
+      "score": {
+        "final": 20.614014,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 16,
+        "weekly": 2
+      },
+      "dependents": 0,
+      "updated": "2026-03-28T10:56:07.438Z",
+      "searchScore": 20.221361,
+      "package": {
+        "name": "react-riichi-mahjong-tiles",
+        "keywords": [
+          "react",
+          "riichi",
+          "mahjong",
+          "svg",
+          "icon",
+          "component"
+        ],
+        "version": "2.0.0",
+        "description": "Riichi Mahjong tiles as React SVG components",
+        "sanitized_name": "react-riichi-mahjong-tiles",
+        "publisher": {
+          "email": "maija.devs@gmail.com",
+          "username": "maijaheiskanen"
+        },
+        "maintainers": [
+          {
+            "email": "maija.devs@gmail.com",
+            "username": "maijaheiskanen"
+          }
+        ],
+        "license": "CC BY 4.0",
+        "date": "2026-01-24T10:12:47.715Z",
+        "links": {
+          "homepage": "https://github.com/MaijaHeiskanen/react-riichi-mahjong-tiles#readme",
+          "repository": "git+https://github.com/MaijaHeiskanen/react-riichi-mahjong-tiles.git",
+          "bugs": "https://github.com/MaijaHeiskanen/react-riichi-mahjong-tiles/issues",
+          "npm": "https://www.npmjs.com/package/react-riichi-mahjong-tiles"
+        }
+      },
+      "score": {
+        "final": 20.221361,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 16,
+        "weekly": 8
+      },
+      "dependents": "1",
+      "updated": "2026-03-27T17:01:10.336Z",
+      "searchScore": 19.164055,
+      "package": {
+        "name": "@k-jun/mahjong",
+        "keywords": [],
+        "version": "0.4.12",
+        "description": "麻雀点数計算ライブラリ",
+        "sanitized_name": "@k-jun/mahjong",
+        "publisher": {
+          "email": "keijun091221@gmail.com",
+          "username": "k-jun"
+        },
+        "maintainers": [
+          {
+            "email": "keijun091221@gmail.com",
+            "username": "k-jun"
+          }
+        ],
+        "license": "MIT",
+        "date": "2025-05-30T13:31:24.499Z",
+        "links": {
+          "homepage": "https://github.com/username/repo#readme",
+          "repository": "git+https://github.com/username/repo.git",
+          "bugs": "https://github.com/username/repo/issues",
+          "npm": "https://www.npmjs.com/package/@k-jun/mahjong"
+        }
+      },
+      "score": {
+        "final": 19.164055,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    },
+    {
+      "downloads": {
+        "monthly": 148,
+        "weekly": 3
+      },
+      "dependents": 0,
+      "updated": "2026-03-29T15:56:07.193Z",
+      "searchScore": 18.810678,
+      "package": {
+        "name": "riichi-ts",
+        "keywords": [
+          "riichi",
+          "mahjong",
+          "shanten",
+          "hairi"
+        ],
+        "version": "1.1.1",
+        "description": "Riichi mahjong calculations library",
+        "sanitized_name": "riichi-ts",
+        "publisher": {
+          "email": "heilage.nsk@gmail.com",
+          "username": "heilage"
+        },
+        "maintainers": [
+          {
+            "email": "heilage.nsk@gmail.com",
+            "username": "heilage"
+          }
+        ],
+        "license": "GPL-3.0-or-later",
+        "date": "2025-05-11T12:05:58.557Z",
+        "links": {
+          "homepage": "https://github.com/MahjongPantheon/riichi-ts#readme",
+          "repository": "git+https://github.com/MahjongPantheon/riichi-ts.git",
+          "bugs": "https://github.com/MahjongPantheon/riichi-ts/issues",
+          "npm": "https://www.npmjs.com/package/riichi-ts"
+        }
+      },
+      "score": {
+        "final": 18.810678,
+        "detail": {
+          "popularity": 1,
+          "quality": 1,
+          "maintenance": 1
+        }
+      },
+      "flags": {
+        "insecure": 0
+      }
+    }
+  ],
+  "total": 74,
+  "time": "2026-04-01T03:48:45.727Z"
+}

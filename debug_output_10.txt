@@ -1,0 +1,94 @@
+﻿--- Comparing Riichi vs Dama ---
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: false,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: false }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: false,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: false }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: false,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: false }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: false,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: false }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: false,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: false }
+Dama (p9 discard):
+  Wins: 0/5
+  Average Points (per win): 0
+  Expected Value: 0
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: true,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: true }
+AVG_SCORE_TABLE_CHECK { t: 11, k: 12, isRiichi: true, tableScore: 8000 }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: true,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: true }
+AVG_SCORE_TABLE_CHECK { t: 11, k: 12, isRiichi: true, tableScore: 8000 }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: true,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: true }
+AVG_SCORE_TABLE_CHECK { t: 11, k: 12, isRiichi: true, tableScore: 8000 }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: true,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: true }
+AVG_SCORE_TABLE_CHECK { t: 11, k: 12, isRiichi: true, tableScore: 8000 }
+RUN_SINGLE_PATH_ENTRY {
+  action: 'discard',
+  riichi: true,
+  debugTrialIndex: 0,
+  tenpaiStop: true
+}
+DEBUG_DISCARD_ACTION { tile: '9p', sDiscard: 10, count: 1 }
+DEBUG_SHANTEN_CHECK { turn: 2, preDrawShanten: 0, totalTiles: 14, isRiichi: true }
+AVG_SCORE_TABLE_CHECK { t: 11, k: 12, isRiichi: true, tableScore: 8000 }
+Riichi (p9 discard):
+  Wins: 5/5
+  Average Points (per win): 7000
+  Expected Value: 7000

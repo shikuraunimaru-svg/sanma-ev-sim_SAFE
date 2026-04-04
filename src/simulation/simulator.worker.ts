@@ -103,6 +103,7 @@ function buildWallTemplate(
 }
 
 export function runBatchSimulations(config: SimulationConfig) {
+    console.log("SIMULATION START");
     const startTime = performance.now();
     initShantenCache();
     clearAgariCache();

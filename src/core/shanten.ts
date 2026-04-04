@@ -16,12 +16,42 @@ import { SANMA_TILE_COUNT, toStandardTile, toSanmaTile } from './sanmaTiles';
 // Shanten calculator
 // Returns -1 for Agari, 0 for Tenpai, >0 for Shanten
 
+export const DEBUG_SHANTEN_KEY = false;
+const debugOldCache = new Map<string, number>();
+
 // Cache for shanten results
-// Key: "c0,c1,...,c26|fixedCount"
-const shantenCache = new Map<string, number>();
+// Key: packed BigInt of 27-tile counts and fixedCount
+const shantenCache = new Map<bigint, number>();
+
+export let suitCacheHit = 0;
+export let suitCacheMiss = 0;
+export let solveSuitCallCount = 0;
+export const suitCache = new Map<number, [number, number][]>();
+const taatsuTemp = new Int32Array(27); // Used in zero-allocation taatsu calculation
+
+export function resetSuitStats() {
+    suitCacheHit = 0;
+    suitCacheMiss = 0;
+    solveSuitCallCount = 0;
+}
 
 export function clearShantenCache() {
-    shantenCache.clear();
+    resetSuitStats();
+    if (DEBUG_SHANTEN_KEY) {
+        debugOldCache.clear();
+    }
+}
+
+/**
+ * Packs 27 tile counts (max 4 each, 3 bits) and fixedMentsuCount (top bits) into a BigInt.
+ */
+export function packCounts27(counts27: number[] | Int32Array | Uint8Array, fixedMentsuCount: number): bigint {
+    let packed = BigInt(fixedMentsuCount) << 81n;
+    for (let i = 0; i < 27; i++) {
+        // limit count to 4 (fits in 3 bits) safely
+        packed |= (BigInt(counts27[i]) & 7n) << BigInt(i * 3);
+    }
+    return packed;
 }
 
 export function calculateShanten(hand: Tile[], fixedMentsuCount: number = 0): number {
@@ -38,18 +68,32 @@ export function calculateShanten(hand: Tile[], fixedMentsuCount: number = 0): nu
  * This skips the 34->27 conversion and is optimized for simulation loops.
  */
 export function calculateShanten27(counts27: number[] | Int32Array | Uint8Array, fixedMentsuCount: number = 0): number {
-    // Check Cache
-    // Using simple string key for now. 
-    const key = counts27.join(',') + '|' + fixedMentsuCount;
-    if (shantenCache.has(key)) {
-        return shantenCache.get(key)!;
+    const key = packCounts27(counts27, fixedMentsuCount);
+    const cached = shantenCache.get(key);
+
+    if (DEBUG_SHANTEN_KEY) {
+        const oldKey = counts27.join(',') + '|' + fixedMentsuCount;
+        console.log(`[Shanten] Old Key: ${oldKey} | New Key: ${key}`);
+        
+        const oldCached = debugOldCache.get(oldKey);
+        if (cached !== undefined && oldCached !== undefined && cached !== oldCached) {
+            console.error(`[ERROR] Shanten Cache mismatch! Old: ${oldCached}, New: ${cached} (OldKey: ${oldKey})`);
+        }
     }
 
-    const breakdown = getShantenBreakdown27(Array.from(counts27), fixedMentsuCount);
+    if (cached !== undefined) {
+        return cached;
+    }
+
+    const breakdown = getShantenBreakdown27(counts27, fixedMentsuCount);
     const result = Math.min(breakdown.normal, breakdown.chiitoi, breakdown.kokushi);
 
-    // Set Cache
     shantenCache.set(key, result);
+
+    if (DEBUG_SHANTEN_KEY) {
+        const oldKey = counts27.join(',') + '|' + fixedMentsuCount;
+        debugOldCache.set(oldKey, result);
+    }
 
     return result;
 }
@@ -64,7 +108,7 @@ export function getShantenBreakdown(hand: Tile[], fixedMentsuCount: number = 0) 
 }
 
 // Internal function requiring 27-array
-export function getShantenBreakdown27(counts: number[], fixedMentsuCount: number, logTile?: string): { normal: number, chiitoi: number, kokushi: number } {
+export function getShantenBreakdown27(counts: number[] | Int32Array | Uint8Array, fixedMentsuCount: number, logTile?: string): { normal: number, chiitoi: number, kokushi: number } {
     const normal = calculateNormalShanten(counts, fixedMentsuCount);
     let chiitoi = 99;
     let kokushi = 99;
@@ -77,7 +121,7 @@ export function getShantenBreakdown27(counts: number[], fixedMentsuCount: number
     return { normal, chiitoi, kokushi };
 }
 
-export function calculateKokushiShanten(counts: number[]): number {
+export function calculateKokushiShanten(counts: number[] | Int32Array | Uint8Array): number {
     // 27-ID Yaochuu:
     // 1m(0), 9m(1)
     // 1p(2), 9p(10)
@@ -105,7 +149,7 @@ export function calculateKokushiShanten(counts: number[]): number {
 }
 
 // Normal Shanten (4 mentsu + 1 head)
-export function calculateNormalShanten(counts: number[], fixedMentsuCount: number): number {
+export function calculateNormalShanten(counts: number[] | Int32Array | Uint8Array, fixedMentsuCount: number): number {
     let minShanten = 8;
 
     // Iterate 0-26 (SANMA_TILE_COUNT)
@@ -125,7 +169,7 @@ export function calculateNormalShanten(counts: number[], fixedMentsuCount: numbe
     return minShanten;
 }
 
-function runSearch(counts: number[], fixedMentsuCount: number): number {
+function runSearch(counts: number[] | Int32Array | Uint8Array, fixedMentsuCount: number): number {
     /*
       Returns standard shanten value for the remaining tiles.
       Formula: 8 - 2*(M_found + M_fixed) - T
@@ -170,22 +214,45 @@ function runSearch(counts: number[], fixedMentsuCount: number): number {
     return bestShanten;
 }
 
-function solveSuit(counts: number[], start: number, end: number, allowShuntsu: boolean): [number, number][] {
+function solveSuit(counts: number[] | Int32Array | Uint8Array, start: number, end: number, allowShuntsu: boolean): [number, number][] {
+    solveSuitCallCount++;
+
+    let key = allowShuntsu ? 1 : 0;
+    const len = end - start + 1;
+    key = key * 32 + len;
+    let allZero = true;
+    for (let i = start; i <= end; i++) {
+        const c = counts[i];
+        if (c > 0) allZero = false;
+        key = key * 8 + c;
+    }
+
+    if (allZero) return [[0, 0]];
+
+    const cached = suitCache.get(key);
+    if (cached) {
+        suitCacheHit++;
+        return cached;
+    }
+    suitCacheMiss++;
+
     // Returns array of [M, T]
     // Backtracking to find all maximal configurations
 
     const results: [number, number][] = [];
-    const localCounts = counts.slice(start, end + 1);
 
-    function calcTaatsu(arr: number[], canShuntsu: boolean): number {
+    function calcTaatsu(canShuntsu: boolean): number {
         let t = 0;
-        const temp = [...arr];
-        for (let i = 0; i < temp.length; i++) {
-            if (temp[i] === 0) continue;
+        // Copy to global taatsuTemp to avoid GC, avoiding allocating new arrays
+        for (let i = start; i <= end; i++) {
+            taatsuTemp[i] = counts[i];
+        }
+        for (let i = start; i <= end; i++) {
+            if (taatsuTemp[i] === 0) continue;
 
             // Pair
-            if (temp[i] >= 2) {
-                temp[i] -= 2;
+            if (taatsuTemp[i] >= 2) {
+                taatsuTemp[i] -= 2;
                 t++;
                 i--; // check again
                 continue;
@@ -193,16 +260,16 @@ function solveSuit(counts: number[], start: number, end: number, allowShuntsu: b
 
             // Penchan/Kanchan/Ryanmen (Only if Shuntsu allowed)
             if (canShuntsu) {
-                if (i + 1 < temp.length && temp[i + 1] > 0) {
-                    temp[i]--;
-                    temp[i + 1]--;
+                if (i + 1 <= end && taatsuTemp[i + 1] > 0) {
+                    taatsuTemp[i]--;
+                    taatsuTemp[i + 1]--;
                     t++;
                     i--;
                     continue;
                 }
-                if (i + 2 < temp.length && temp[i + 2] > 0) {
-                    temp[i]--;
-                    temp[i + 2]--;
+                if (i + 2 <= end && taatsuTemp[i + 2] > 0) {
+                    taatsuTemp[i]--;
+                    taatsuTemp[i + 2]--;
                     t++;
                     i--;
                     continue;
@@ -213,14 +280,14 @@ function solveSuit(counts: number[], start: number, end: number, allowShuntsu: b
     }
 
     function searchExhaustive(idx: number, currentM: number) {
-        if (idx >= localCounts.length) {
+        if (idx > end) {
             // Count Taatsu
-            const t = calcTaatsu(localCounts, allowShuntsu);
+            const t = calcTaatsu(allowShuntsu);
             results.push([currentM, t]);
             return;
         }
 
-        const count = localCounts[idx];
+        const count = counts[idx];
         if (count === 0) {
             searchExhaustive(idx + 1, currentM);
             return;
@@ -228,21 +295,21 @@ function solveSuit(counts: number[], start: number, end: number, allowShuntsu: b
 
         // Try Koutsu
         if (count >= 3) {
-            localCounts[idx] -= 3;
+            counts[idx] -= 3;
             searchExhaustive(idx, currentM + 1);
-            localCounts[idx] += 3;
+            counts[idx] += 3;
         }
 
         // Try Shuntsu
-        if (allowShuntsu && idx + 2 < localCounts.length) {
-            if (localCounts[idx] > 0 && localCounts[idx + 1] > 0 && localCounts[idx + 2] > 0) {
-                localCounts[idx]--;
-                localCounts[idx + 1]--;
-                localCounts[idx + 2]--;
+        if (allowShuntsu && idx + 2 <= end) {
+            if (counts[idx] > 0 && counts[idx + 1] > 0 && counts[idx + 2] > 0) {
+                counts[idx]--;
+                counts[idx + 1]--;
+                counts[idx + 2]--;
                 searchExhaustive(idx, currentM + 1);
-                localCounts[idx]++;
-                localCounts[idx + 1]++;
-                localCounts[idx + 2]++;
+                counts[idx]++;
+                counts[idx + 1]++;
+                counts[idx + 2]++;
             }
         }
 
@@ -250,8 +317,9 @@ function solveSuit(counts: number[], start: number, end: number, allowShuntsu: b
         searchExhaustive(idx + 1, currentM);
     }
 
-    searchExhaustive(0, 0);
+    searchExhaustive(start, 0);
 
+    suitCache.set(key, results);
     return results;
 }
 
@@ -326,7 +394,7 @@ export function getAgariPatterns(hand: Tile[], fixedMentsu: Mentsu[] = []): Hand
     return results;
 }
 
-export function calculateChiitoitsuShanten(counts: number[], logTile?: string): number {
+export function calculateChiitoitsuShanten(counts: number[] | Int32Array | Uint8Array, logTile?: string): number {
     let pairCount = 0;
     let singleCount = 0;
     let tripleCount = 0;

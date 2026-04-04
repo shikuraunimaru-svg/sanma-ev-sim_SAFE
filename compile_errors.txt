@@ -1,0 +1,9 @@
+﻿src/core/test_yaku_coverage.ts(10,11): error TS2322: Type '{ myHand: Tile[]; fixedMentsu: Mentsu[]; otherOpenMelds?: Mentsu[] | undefined; myDiscards: Tile[]; doraIndicators: Tile[]; myKita: number; otherKita: number; trials: number; currentTurn: number; ... 5 more ...; validationMode: boolean; }' is not assignable to type 'SimulationConfig'.
+  Types of property 'tenpaiStop' are incompatible.
+    Type 'boolean | undefined' is not assignable to type 'boolean'.
+      Type 'undefined' is not assignable to type 'boolean'.
+src/simulation/debug_kita_mountain.ts(16,20): error TS2554: Expected 19-21 arguments, but got 18.
+src/simulation/debug_kita_mountain.ts(39,25): error TS2554: Expected 19-21 arguments, but got 18.
+src/simulation/debug_riichi_score.ts(29,24): error TS2554: Expected 19-21 arguments, but got 18.
+src/simulation/profiler.ts(57,13): error TS2554: Expected 19-21 arguments, but got 18.
+src/simulation/repro_riichi_kita.ts(24,24): error TS2554: Expected 19-21 arguments, but got 18.
