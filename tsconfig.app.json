@@ -5,7 +5,7 @@
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "types": ["vite/client"],
+    "types": ["vite/client", "node"],
     "skipLibCheck": true,
 
     "moduleResolution": "bundler",
@@ -24,7 +24,16 @@
   },
   "include": ["src"],
   "exclude": [
+    "src/inspect_*.ts",
+    "src/repro_*.ts",
+    "src/verify_*.ts",
+    "src/debug_*.txt",
     "src/simulation/investigate_*",
-    "src/simulation/verify_*"
+    "src/simulation/debug_*.ts",
+    "src/simulation/generateTables.ts",
+    "src/simulation/tableGenerator.worker.ts",
+    "src/simulation/test_req.ts",
+    "src/dev/**/*",
+    "tmp_*"
   ]
 }

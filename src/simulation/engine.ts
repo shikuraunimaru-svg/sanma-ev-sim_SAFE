@@ -8,6 +8,7 @@ export { getShantenBreakdown27 };
 import type { Mentsu, HandStructure } from '../core/shanten';
 import { calculateScore } from '../core/yaku';
 import type { GameState, YakuResult } from '../core/yaku';
+export type { GameState, YakuResult };
 import { calculatePoints } from '../core/score';
 import type { ScoreResult } from '../core/score';
 import { logImportant, logDebug, logVerbose } from '../utils/logger';
@@ -963,6 +964,31 @@ export function getWinningTiles(hand: Tile[], fixedMentsuCount: number): Tile[] 
 // =========================================================
 // Phase 2: Effective Ukeire Weighting (Progress Evaluation)
 // =========================================================
+
+function formsMultiBlockExpansion(tile27: number, counts: Int8Array | number[]): boolean {
+    const normTile = toStandardTile(tile27);
+    const type = Math.floor(normTile / 9);
+    if (type >= 3) return false;
+
+    let mentsuCandidates = 0;
+
+    for (let i = -2; i <= 0; i++) {
+        const aNum = (normTile % 9) + 1 + i;
+        const cNum = aNum + 2;
+
+        if (aNum < 1 || cNum > 9) continue;
+        
+        const aT27 = toSanmaTile(normTile + i);
+        const bT27 = toSanmaTile(normTile + i + 1);
+        
+        if (aT27 !== -1 && bT27 !== -1 && counts[aT27] > 0 && counts[bT27] > 0) {
+            mentsuCandidates++;
+        }
+    }
+
+    return mentsuCandidates >= 2;
+}
+
 export function evaluateShapeProgress(beforeHand: Int8Array | number[], drawT27: number, doraSet: Set<number>, isRed: boolean): number {
     const c = beforeHand[drawT27];
     const normTile = toStandardTile(drawT27);
@@ -1028,6 +1054,18 @@ export function evaluateShapeProgress(beforeHand: Int8Array | number[], drawT27:
             if (num === 4 && left2 > 0 && left3 > 0) w = Math.max(w, 1);
             if (num === 6 && right2 > 0 && right3 > 0) w = Math.max(w, 1);
         }
+
+        // 孤立牌判定 (c === 0 は新しく引いた単独の牌)と連鎖連動チェック
+        const isIsolated = (c === 0);
+        if (isIsolated) {
+            beforeHand[drawT27]++;
+            if (formsMultiBlockExpansion(drawT27, beforeHand)) {
+                w += 8;
+            }
+            beforeHand[drawT27]--;
+        }
+
+
     } else if (c === 1) {
         w = Math.max(w, 2);
 
@@ -1313,9 +1351,18 @@ export function findBestDiscard27(
         // 通常の貪欲法 (同スコアの場合はランダム)
         const bestScore = validCandidates[0].score;
         const bests = validCandidates.filter(c => c && c.score === bestScore);
-        if (bests.length === 0) return validCandidates[0].tile;
         const randomChoice = rng ? rng.next() : Math.random();
-        const chosen = bests[Math.floor(randomChoice * bests.length)];
+        const chosen = bests.length === 0 ? validCandidates[0] : bests[Math.floor(randomChoice * bests.length)];
+
+        if (debugTrialIndex < 10) {
+            console.log("BEST_DISCARD_CHOSEN", {
+                tile: tileToString(toStandardTile(chosen.tile)),
+                shanten: chosen.shanten,
+                ev: chosen.ev.toFixed(2),
+                candidatesCount: validCandidates.length
+            });
+        }
+
         if (!chosen || chosen.tile === undefined) return -1;
         return chosen.tile;
     }

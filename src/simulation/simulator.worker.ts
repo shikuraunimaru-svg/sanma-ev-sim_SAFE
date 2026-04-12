@@ -241,7 +241,8 @@ export function runBatchSimulations(config: SimulationConfig) {
         });
     }
 
-    const allNodes: Candidate[] = possibleActions.map(a => ({
+    const allNodes: Candidate[] = possibleActions.map((a, index) => ({
+        id: "node_" + index,
         action: a,
         trials: 0,
         sumEV: 0,
@@ -331,7 +332,45 @@ export function runBatchSimulations(config: SimulationConfig) {
         }
 
         node.visits++;
+        node.meanEV = node.sumEV / node.visits;
     };
+
+    function computeCI(node: any) {
+        if (node.visits < 2) {
+            return { lower: -Infinity, upper: Infinity };
+        }
+
+        const variance = (node.sumEV2 - node.visits * node.meanEV * node.meanEV) / (node.visits - 1);
+        const stderr = Math.sqrt(Math.max(variance, 0) / node.visits);
+        const Z = 3.29; // 99.9%信頼区間
+        const delta = Z * stderr;
+
+        return {
+            lower: node.meanEV - delta,
+            upper: node.meanEV + delta,
+        };
+    }
+
+    function shouldStop(nodes: any[]): boolean {
+        if (nodes.length < 3) return false;
+
+        nodes.sort((a, b) => b.meanEV - a.meanEV);
+
+        const A = nodes[0];
+        const B = nodes[1];
+        const C = nodes[2];
+
+        if (A.visits < 2000 || B.visits < 2000 || C.visits < 2000) return false;
+
+        const ciA = computeCI(A);
+        const ciB = computeCI(B);
+        const ciC = computeCI(C);
+
+        const beatB = ciA.lower > ciB.upper;
+        const beatC = ciA.lower > ciC.upper;
+
+        return beatB && beatC;
+    }
 
     const TOTAL_INITIAL_STEPS = 2000;
 
@@ -414,23 +453,16 @@ export function runBatchSimulations(config: SimulationConfig) {
     // ==========================================
     // Phase 2: Top-3 CI Racing
     // ==========================================
-    // results 配列を構築せず、ucbNodes の参照をそのまま使って上位 3 件を特定する
+    // results 配列を構築せず、ucbNodes の参照をそのまま使って上位を特定する
     ucbNodes.sort((a, b) => b.meanEV - a.meanEV);
-    const racingNodes = ucbNodes.slice(0, Math.min(3, ucbNodes.length));
+    
+    const bestEV = ucbNodes.length > 0 ? ucbNodes[0].meanEV : 0;
+    const racingNodes = ucbNodes
+        .filter(node => node.meanEV >= bestEV * 0.9)
+        .slice(0, 5);
+
 
     const RACING_MAX_TRIALS = 3000;
-
-    function computeLocalCI(node: any) {
-        if (node.visits < 2) return { lower: -Infinity, upper: Infinity };
-        // 指示された分散計算式: variance = (sumEV2 - visits * meanEV^2) / (visits - 1)
-        const variance = (node.sumEV2 - node.visits * node.meanEV * node.meanEV) / (node.visits - 1);
-        const stderr = Math.sqrt(Math.max(variance, 0) / node.visits);
-        const delta = 1.96 * stderr;
-        return {
-            lower: node.meanEV - delta,
-            upper: node.meanEV + delta
-        };
-    }
 
     let racingTrials = 0;
     let racingStopReason = "MAX_TRIALS";
@@ -498,6 +530,11 @@ export function runBatchSimulations(config: SimulationConfig) {
             totalSimulationSteps += 4;
             racingTrials += 4;
         }
+
+        if (shouldStop(racingNodes)) {
+            racingStopReason = "CI_CONVERGED_TOP3";
+            break;
+        }
     }
 
     // ========== Results Aggregation ==========
@@ -535,7 +572,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     }
 
     const results: any[] = ucbNodes.map(node => {
-        const ci = computeLocalCI(node);
+        const ci = computeCI(node);
         const visits = node.visits || 0;
         const winCount = node.winCount || 0;
 
@@ -585,6 +622,7 @@ export function runBatchSimulations(config: SimulationConfig) {
         }
 
         return {
+            id: node.id,
             action: node.action,
             ev: visits > 0 ? node.meanEV : 0,
             evMean: visits > 0 ? node.meanEV : 0,
@@ -603,7 +641,7 @@ export function runBatchSimulations(config: SimulationConfig) {
             averageAgariAfterTurns: averageAgariAfterTurns,
             effectiveTileTypes: ukeire.typeCount,
             effectiveTileCount: ukeire.tileCount,
-            converged: racingStopReason === "CI_CONVERGED",
+            converged: racingStopReason === "CI_CONVERGED_TOP3",
             stdError: actualTrials > 1 ? Math.sqrt(Math.max(((node.sumEV2 - actualTrials * node.meanEV * node.meanEV) / (actualTrials - 1)), 0)) / Math.sqrt(actualTrials) : 0,
             confidence95: actualTrials > 1 ? (Math.abs(ci.upper - ci.lower) / 2) : 0,
             ciLower: visits > 0 ? ci.lower : 0,
@@ -611,24 +649,52 @@ export function runBatchSimulations(config: SimulationConfig) {
             lcb: visits > 0 ? ci.lower : 0,
             ryukyokuCount: node.ryukyokuCount,
             tenpaiStopCount: node.tenpaiStopCount,
-            wallExhaustCount: node.wallExhaustCount
+            wallExhaustCount: node.wallExhaustCount,
+            ci: [ci.lower, ci.upper]
         };
     });
 
+    if (racingStopReason === "CI_CONVERGED_TOP3" && racingNodes.length >= 3) {
+        const A = racingNodes[0];
+        const B = racingNodes[1];
+        const C = racingNodes[2];
+        const ciA = computeCI(A);
+        const ciB = computeCI(B);
+        const ciC = computeCI(C);
+        const beatB = ciA.lower > ciB.upper;
+        const beatC = ciA.lower > ciC.upper;
+        logImportant("EARLY_STOP_TRIGGERED", {
+            reason: "CI_TOP3",
+            meanA: A.meanEV,
+            meanB: B.meanEV,
+            meanC: C.meanEV,
+            ciA: [ciA.lower, ciA.upper],
+            ciB: [ciB.lower, ciB.upper],
+            ciC: [ciC.lower, ciC.upper],
+            beatB,
+            beatC,
+            visitsA: A.visits,
+            visitsB: B.visits,
+            visitsC: C.visits
+        });
+    }
+
     // Logging Trial Stats and End Reasons
     results.forEach(r => {
-        const actionStr = r.action.type === 'discard' ? tileToString(r.action.tile) : r.action.type;
+        let actionStr = r.action.type;
+        if (r.action.type === 'discard') {
+            actionStr = tileToString(r.action.tile) + (r.action.riichi ? ' (Riichi)' : '');
+        } else if ((r.action as any).tile !== undefined) {
+            actionStr += ' ' + tileToString((r.action as any).tile);
+        }
+        
         logImportant("ACTION_TRIAL_STATS", {
+            id: r.id,
             tile: actionStr,
-            trials: r.trialCount,
+            visits: r.trialCount,
+            mean: r.evMean,
             winRate: r.winRate,
-            ev: r.evMean
-        });
-        logImportant("ACTION_END_REASON", {
-            tile: actionStr,
-            win: r.agariCount, // r.winRate converts this to stats, here raw agariCount might be winCount, but note: node.winCount is passed down
-            ryukyoku: r.ryukyokuCount,
-            tenpaiStop: r.tenpaiStopCount
+            ci: r.ci
         });
     });
 
