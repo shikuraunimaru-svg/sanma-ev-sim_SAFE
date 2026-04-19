@@ -21,7 +21,7 @@ const debugOldCache = new Map<string, number>();
 
 // Cache for shanten results
 // Key: packed BigInt of 27-tile counts and fixedCount
-const shantenCache = new Map<bigint, number>();
+export const shantenCache = new Map<bigint, number>();
 
 export let suitCacheHit = 0;
 export let suitCacheMiss = 0;
@@ -42,14 +42,28 @@ export function clearShantenCache() {
     }
 }
 
+const PACK_LOOKUP: bigint[][] = [];
+for (let i = 0; i < 27; i++) {
+    const shift = BigInt(i * 3);
+    PACK_LOOKUP.push([
+        0n,
+        1n << shift,
+        2n << shift,
+        3n << shift,
+        4n << shift,
+        5n << shift,
+        6n << shift,
+        7n << shift
+    ]);
+}
+
 /**
  * Packs 27 tile counts (max 4 each, 3 bits) and fixedMentsuCount (top bits) into a BigInt.
  */
 export function packCounts27(counts27: number[] | Int32Array | Uint8Array, fixedMentsuCount: number): bigint {
     let packed = BigInt(fixedMentsuCount) << 81n;
     for (let i = 0; i < 27; i++) {
-        // limit count to 4 (fits in 3 bits) safely
-        packed |= (BigInt(counts27[i]) & 7n) << BigInt(i * 3);
+        packed |= PACK_LOOKUP[i][counts27[i] & 7];
     }
     return packed;
 }

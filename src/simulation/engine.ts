@@ -3,7 +3,7 @@ export { TILES };
 export const toSanmaTile = toSanmaTileCore;
 export const toStandardTile = toStandardTileCore;
 import type { Tile } from '../core/tile';
-import { calculateShanten27, getAgariPatterns, getShantenBreakdown27, suitCacheHit, suitCacheMiss, solveSuitCallCount, suitCache, resetSuitStats } from '../core/shanten';
+import { calculateShanten27, getAgariPatterns, getShantenBreakdown27, suitCacheHit, suitCacheMiss, solveSuitCallCount, suitCache, resetSuitStats, packCounts27, shantenCache } from '../core/shanten';
 export { getShantenBreakdown27 };
 import type { Mentsu, HandStructure } from '../core/shanten';
 import { calculateScore } from '../core/yaku';
@@ -478,6 +478,8 @@ export type SimulationConfig = {
     selfEffectiveWallCount: number;
     liveWallLimit: number;
     myKanCount: number;
+    useLookahead?: boolean;
+
     validationMode?: boolean;
 };
 
@@ -667,7 +669,6 @@ export function shuffleInPlace(arr: Uint8Array, len: number) {
 
 export let cacheHits = 0;
 export let cacheMisses = 0;
-export const shantenCache = new Map<string, number>();
 export let shantenCacheHits = 0;
 export let shantenCacheMisses = 0;
 
@@ -769,8 +770,6 @@ export function resetPerformanceStats() {
     shantenCacheMisses = 0;
     shantenCalls = 0;
     shantenTotalTime = 0;
-    shantenHit = 0;    // Reset local memoization stats
-    shantenMiss = 0;
     agariCalls = 0;
     agariTotalTime = 0;
     scoreFastCalls = 0;
@@ -835,35 +834,31 @@ export function initWallPool(template: Uint8Array) {
 }
 
 // --- Shanten Memoization ---
-let shantenCacheLocal: Map<string, number> | null = null;
-let shantenHit = 0;
-let shantenMiss = 0;
+export function initShantenCache() {}
+export function clearShantenCache() {}
+export function getShantenCacheStats() { return { hit: shantenCacheHits, miss: shantenCacheMisses }; }
 
-export function initShantenCache() {
-    if (!shantenCacheLocal) {
-        shantenCacheLocal = new Map();
+export function getShanten(counts27: Int8Array | Int32Array | number[] | Uint8Array, fixedMentsuCount: number = 0): number {
+    shantenCalls++;
+    const key = packCounts27(counts27, fixedMentsuCount);
+    const cached = shantenCache.get(key);
+    if (cached !== undefined) {
+        shantenCacheHits++;
+        return cached;
     }
+    
+    shantenCacheMisses++;
+    const t0 = performance.now();
+    const result = calculateShanten27(counts27 as any, fixedMentsuCount);
+    shantenTotalTime += (performance.now() - t0);
+    return result;
 }
 
-export function clearShantenCache() {
-    // No-op to preserve cache between simulations for better performance
-}
-
-export function getShantenCacheStats() {
-    return { hit: shantenHit, miss: shantenMiss };
-}
-
-function encodeCounts27(counts: Int8Array | Int32Array): string {
-    let s = "";
-    for (let i = 0; i < 27; i++) {
-        s += String.fromCharCode(48 + counts[i]); // '0'-'4'
-    }
-    return s;
-}
+export const calculateShantenCached = getShanten;
+export const calculateShantenWith27 = getShanten;
+export const getShantenMemoized = getShanten;
 
 export function calculateShanten(hand: Tile[] | number[], fixedMentsuLength: number = 0): number {
-    shantenCalls++;
-    const t0 = performance.now();
     const hand27 = new Int8Array(27);
     for (let i = 0; i < hand.length; i++) {
         const t = hand[i];
@@ -880,63 +875,7 @@ export function calculateShanten(hand: Tile[] | number[], fixedMentsuLength: num
             }
         }
     }
-    const s = getShantenMemoized(hand27 as any, fixedMentsuLength);
-    shantenTotalTime += (performance.now() - t0);
-    return s;
-}
-
-export function handKey(hand: Uint8Array | Int8Array | number[]): string {
-    return Array.from(hand).join(",");
-}
-
-export function calculateShantenCached(hand: Uint8Array | Int8Array | number[] | Int32Array, fixedMentsuCount: number = 0): number {
-    const key = handKey(hand as any) + "|" + fixedMentsuCount;
-    const cached = shantenCache.get(key);
-
-    if (cached !== undefined) {
-        shantenCacheHits++;
-        return cached;
-    }
-
-    shantenCacheMisses++;
-    const result = calculateShantenWith27(hand as any, fixedMentsuCount);
-
-    shantenCache.set(key, result);
-    if (shantenCache.size > 100000) {
-        shantenCache.clear();
-    }
-
-    return result;
-}
-
-export function calculateShantenWith27(hand27: Int8Array | Int32Array | number[], fixedMentsuCount: number = 0): number {
-    shantenCalls++;
-    const t0 = performance.now();
-    const s = getShantenMemoized(hand27 as any, fixedMentsuCount);
-    shantenTotalTime += (performance.now() - t0);
-    return s;
-}
-
-// removed duplicate shantenCacheLocal definition
-
-export function getShantenMemoized(counts: Int8Array | Int32Array, fixedMentsuCount: number): number {
-    if (!shantenCacheLocal) return calculateShanten27(counts as any, fixedMentsuCount);
-
-    const key = String.fromCharCode(48 + fixedMentsuCount) + encodeCounts27(counts);
-    const cached = shantenCacheLocal.get(key);
-    if (cached !== undefined) {
-        shantenHit++;
-        return cached;
-    }
-    shantenMiss++;
-
-    const start = performance.now();
-    const result = calculateShanten27(counts as any, fixedMentsuCount);
-    shantenTotalTime += (performance.now() - start);
-    shantenCalls++;
-
-    shantenCacheLocal.set(key, result);
-    return result;
+    return getShanten(hand27, fixedMentsuLength);
 }
 
 export function getWinningTiles27(hand27: Int32Array | Int8Array | number[], fixedMentsuCount: number): number[] {
@@ -1146,6 +1085,188 @@ export const TURN_FACTOR = [
     0.27,
     0.23
 ];
+
+// =========================================================
+// Phase 78: Pseudo 2-Step Lookahead Evaluation (初手専用)
+// =========================================================
+
+export function getTopDiscardsForLookahead(
+    hand27: Int8Array | number[],
+    fixedMentsuCount: number
+): number[] {
+    const candidates: { tile: number; score: number }[] = [];
+
+    const evalLight = (h27: Int8Array | number[], s: number) => {
+        let score = (8 - s) * 1000;
+        for (let i = 0; i < 27; i++) {
+            if (h27[i] >= 2) score += 5;
+        }
+        for (const [start, end] of [[2, 10], [11, 19]]) {
+            for (let i = start; i < end; i++) {
+                if (h27[i] > 0 && h27[i + 1] > 0) score += 8;
+            }
+            for (let i = start; i < end - 1; i++) {
+                if (h27[i] > 0 && h27[i + 2] > 0) score += 3;
+            }
+        }
+        return score;
+    };
+
+    for (let i = 0; i < 27; i++) {
+        if (hand27[i] > 0) {
+            hand27[i]--;
+            const shanten = calculateShantenCached(hand27 as any, fixedMentsuCount);
+            const score = evalLight(hand27, shanten);
+            candidates.push({ tile: i, score });
+            hand27[i]++;
+        }
+    }
+
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates.slice(0, 3).map(c => c.tile);
+}
+
+export function evaluateWithLookahead(
+    initialHand27: Int8Array | number[],
+    discardTile27: number,
+    config: SimulationConfig,
+    invisibleCounts29: Int8Array | number[],
+    doraIndicators: Tile[],
+    myKita: number,
+    otherKita: number,
+    rng: SimpleRNG,
+    liveWallLimit: number,
+    wallPool: Uint8Array[]
+): number {
+    const hand27 = new Int8Array(initialHand27);
+    hand27[discardTile27]--; // 初手の打牌を適用
+
+    const currentShanten = calculateShantenCached(hand27 as any, config.fixedMentsu.length);
+    const currentUkeire = getUkeireInfo27(hand27, config.fixedMentsu.length, invisibleCounts29).tileCount;
+
+    const effectiveTiles: { drawT34Index: number; drawT27: number; weight: number }[] = [];
+    let baseWeight = 0;
+
+    for (let t = 0; t < 29; t++) {
+        const count = invisibleCounts29[t];
+        if (count <= 0) continue;
+        
+        const drawT27 = toSanmaTile(toNormalFive(TILE_TYPES[t]));
+        if (drawT27 === -1) continue;
+
+        if (effectiveTiles.some(e => e.drawT34Index === t)) {
+            continue;
+        }
+
+        hand27[drawT27]++;
+        const newShanten = calculateShantenCached(hand27 as any, config.fixedMentsu.length);
+        const newUkeire = getUkeireInfo27(hand27, config.fixedMentsu.length, invisibleCounts29).tileCount;
+        hand27[drawT27]--;
+
+        let isEffective = false;
+        if (currentShanten === 0) {
+            if (newShanten === -1) isEffective = true; // テンパイ時は実際に和了できるか
+        } else {
+            // シャンテン悪化しない OR 有効牌枚数が増大
+            if (newShanten <= currentShanten || newUkeire > currentUkeire) isEffective = true;
+        }
+
+        if (isEffective) {
+            effectiveTiles.push({ drawT34Index: t, drawT27, weight: count });
+            baseWeight += count;
+        }
+    }
+
+    effectiveTiles.sort((a, b) => b.weight - a.weight);
+    const topEffectiveTiles = effectiveTiles.slice(0, 10);
+    
+    let totalWeight = 0;
+    for (const et of topEffectiveTiles) totalWeight += et.weight;
+
+    if (totalWeight === 0) return 0; // 有効牌なし
+
+    let totalEV = 0;
+    const LOOKAHEAD_ROLLOUTS = 40;
+
+    const workTemplateCounts = new Int8Array(29);
+    const workTrialCounts = new Int8Array(29);
+    const workHand27 = new Int8Array(27);
+    const workUraCounts = new Int8Array(29);
+
+    for (const et of topEffectiveTiles) {
+        hand27[et.drawT27]++; // ツモを適用
+        
+        for (let i = 0; i < 29; i++) workTemplateCounts[i] = invisibleCounts29[i];
+        workTemplateCounts[et.drawT34Index]--;
+
+        const nextDiscards = getTopDiscardsForLookahead(hand27, config.fixedMentsu.length);
+        const nextEVs: number[] = [];
+
+        // 次打牌候補についてロールアウト
+        for (const nextDiscard of nextDiscards) {
+            let evalSum = 0;
+            const reconstructHand = (): Tile[] => {
+                const res: Tile[] = [];
+                for (let i = 0; i < 27; i++) {
+                    const cnt = hand27[i];
+                    const t34 = toStandardTile(i);
+                    for (let j = 0; j < cnt; j++) res.push(t34);
+                }
+                return res;
+            };
+
+            const stateHand = reconstructHand();
+            const action: Action = { type: 'discard', tile: toStandardTile(nextDiscard) };
+            const nShanten = calculateShantenCached(hand27 as any, config.fixedMentsu.length);
+
+            // ロールアウト実行
+            for (let r = 0; r < LOOKAHEAD_ROLLOUTS; r++) {
+                workHand27.fill(0); workTrialCounts.fill(0); workUraCounts.fill(0);
+                const res = runSinglePath(
+                    stateHand, config.fixedMentsu, action, myKita, otherKita, doraIndicators,
+                    (config.currentTurn || 0) + 1, !!config.isDealer,
+                    wallPool[r % wallPool.length], 108, liveWallLimit, liveWallLimit,
+                    workTemplateCounts, workTrialCounts, workHand27, workUraCounts,
+                    rng.next() * 1000000 >>> 0, nShanten, (config.currentTurn || 0) + 1, 9999
+                );
+                evalSum += res.point;
+            }
+
+            const avgEV = evalSum / LOOKAHEAD_ROLLOUTS;
+            nextEVs.push(avgEV);
+        }
+
+        // 降順ソート
+        nextEVs.sort((a, b) => b - a);
+
+        // 上位2件を取得（存在しない場合のフォールバックあり）
+        const top1 = nextEVs[0];
+        const top2 = nextEVs.length > 1 ? nextEVs[1] : nextEVs[0];
+
+        // 重み付き平均（top1を優先）
+        const WEIGHT_TOP1 = 0.7;
+        const WEIGHT_TOP2 = 0.3;
+
+        const bestNextEV = WEIGHT_TOP1 * top1 + WEIGHT_TOP2 * top2;
+
+        logDebug("LOOKAHEAD_WEIGHTED_EV", {
+            candidates: nextEVs,
+            top1,
+            top2,
+            weightedEV: bestNextEV
+        });
+        
+        hand27[et.drawT27]--; // ツモを取り消し
+        
+        if (bestNextEV > -Infinity) {
+            totalEV += bestNextEV * et.weight;
+        }
+    }
+
+    return totalEV / totalWeight;
+}
+
+
 
 /**
  * Pure function to find the best discard from a 27-count hand.

@@ -9,6 +9,8 @@ type Candidate = Engine.Candidate;
 
 import type { SimulationConfig, Action } from './engine';
 
+const MIN_VISITS = 500;
+
 const calculateShanten = (hand: Tile[] | Int8Array, fixedCount: number) => {
     if (hand instanceof Int8Array) {
         return getShantenMemoized(hand, fixedCount);
@@ -306,6 +308,49 @@ export function runBatchSimulations(config: SimulationConfig) {
         node.tenpaiWithin3TurnCount = 0;
     }
 
+    if (config.useLookahead) {
+        logImportant("LOOKAHEAD_ENABLED", { nodes: ucbNodes.length });
+        const rng = new Engine.SimpleRNG(0x12345678);
+        const VIRTUAL_VISITS = 20;
+
+        for (const node of ucbNodes) {
+            if (node.action.type === 'discard') {
+                const initialHand27 = new Int8Array(27);
+                for (const t of myHand) {
+                    const s = toSanmaTile(t);
+                    if (s !== -1) initialHand27[s]++;
+                }
+                const discardTile27 = toSanmaTile(toNormalFive((node.action as any).tile));
+                
+                if (discardTile27 !== -1) {
+                    const lookaheadEV = Engine.evaluateWithLookahead(
+                        initialHand27,
+                        discardTile27,
+                        config,
+                        templateCounts as any,
+                        doraIndicators,
+                        myKita,
+                        otherKita,
+                        rng,
+                        liveWallLimit,
+                        wallPool
+                    );
+                    
+                    node.meanEV = lookaheadEV;
+                    node.sumEV = lookaheadEV * VIRTUAL_VISITS;
+                    node.sumEV2 = lookaheadEV * lookaheadEV * VIRTUAL_VISITS;
+                    node.visits = VIRTUAL_VISITS;
+                    
+                    logDebug("LOOKAHEAD_EV_RESULT", {
+                        action: tileToString((node.action as any).tile),
+                        ev: lookaheadEV
+                    });
+                }
+            }
+        }
+    }
+
+
     const updateNodeStats = (node: any, res: Engine.SimulationPathResult) => {
         const point = res.point;
         node.sumEV += point;
@@ -352,6 +397,10 @@ export function runBatchSimulations(config: SimulationConfig) {
     }
 
     function shouldStop(nodes: any[]): boolean {
+        for (const node of ucbNodes) {
+            if (node.visits < MIN_VISITS) return false;
+        }
+
         if (nodes.length < 3) return false;
 
         nodes.sort((a, b) => b.meanEV - a.meanEV);
@@ -467,7 +516,10 @@ export function runBatchSimulations(config: SimulationConfig) {
     let racingTrials = 0;
     let racingStopReason = "MAX_TRIALS";
 
-    const racingWallSamples = Math.floor(RACING_MAX_TRIALS / (racingNodes.length * 4));
+    const racingWallSamples = Math.max(
+        Math.floor(RACING_MAX_TRIALS / (racingNodes.length * 4)),
+        Math.ceil(MIN_VISITS / 4)
+    );
 
     for (let w = 0; w < racingWallSamples; w++) {
         const wallIndex = totalSimulationSteps % wallPool.length;
@@ -478,7 +530,9 @@ export function runBatchSimulations(config: SimulationConfig) {
         const seed1 = totalSimulationSteps >>> 0;
         const seed2 = (totalSimulationSteps >>> 0) ^ 0x9e3779b9;
 
-        for (const node of racingNodes) {
+        for (const node of ucbNodes) {
+            if (node.visits >= MIN_VISITS && !racingNodes.includes(node)) continue;
+
             const afterHand = node.action.type === 'discard' ? removeOneTile(myHand, (node.action as any).tile) : myHand;
             const swappedAfterHand = swapTileArray(afterHand);
             const swappedActionDef = swapAction(node.action);
@@ -528,7 +582,9 @@ export function runBatchSimulations(config: SimulationConfig) {
             if (res4.finalShanten <= 0) node.tenpaiCount++;
 
             totalSimulationSteps += 4;
-            racingTrials += 4;
+            if (racingNodes.includes(node)) {
+                racingTrials += 4;
+            }
         }
 
         if (shouldStop(racingNodes)) {
@@ -696,6 +752,10 @@ export function runBatchSimulations(config: SimulationConfig) {
             winRate: r.winRate,
             ci: r.ci
         });
+        
+        const evRound = Math.round(r.evMean);
+        const margin = Math.round(r.confidence95); 
+        logImportant(`[${actionStr}] EV: ${evRound} ± ${margin} (n=${r.trialCount})`);
     });
 
     const endTime = performance.now();
