@@ -60,7 +60,7 @@ for (let i = 0; i < 27; i++) {
 /**
  * Packs 27 tile counts (max 4 each, 3 bits) and fixedMentsuCount (top bits) into a BigInt.
  */
-export function packCounts27(counts27: number[] | Int32Array | Uint8Array, fixedMentsuCount: number): bigint {
+export function packCounts27(counts27: number[] | Int32Array | Uint8Array | Int8Array, fixedMentsuCount: number): bigint {
     let packed = BigInt(fixedMentsuCount) << 81n;
     for (let i = 0; i < 27; i++) {
         packed |= PACK_LOOKUP[i][counts27[i] & 7];

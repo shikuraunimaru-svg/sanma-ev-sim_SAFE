@@ -1216,7 +1216,7 @@ export function evaluateWithLookahead(
             };
 
             const stateHand = reconstructHand();
-            const action: Action = { type: 'discard', tile: toStandardTile(nextDiscard) };
+            const action: Action = { type: 'discard', tile: toStandardTile(nextDiscard), tileInd: 0, riichi: false };
             const nShanten = calculateShantenCached(hand27 as any, config.fixedMentsu.length);
 
             // ロールアウト実行
