@@ -263,6 +263,52 @@ export function scoreWinningHandFast(
         yakumanMult++;
     }
 
+    // 緑一色
+    if (fullLen > 0) {
+        let isRyuuiisou = true;
+        for (let i = 0; i < hand.length; i++) {
+            const t = toNormalFive(hand[i]);
+            // 2s, 3s, 4s, 6s, 8s, Hatsu
+            if (!(t === 19 || t === 20 || t === 21 || t === 23 || t === 25 || t === 32)) { isRyuuiisou = false; break; }
+        }
+        if (isRyuuiisou) yakumanMult++;
+    }
+
+    // 九蓮宝燈
+    if (isMenzen && hand.length === 14) {
+        let isChuuren = true;
+        let suit = -1;
+        for (let i = 0; i < 14; i++) {
+            const t = toNormalFive(hand[i]);
+            if (t >= 27) { isChuuren = false; break; }
+            const s = Math.floor(t / 9);
+            if (suit === -1) suit = s;
+            else if (suit !== s) { isChuuren = false; break; }
+        }
+        if (isChuuren && suit !== 0) {
+            let c0=0, c1=0, c2=0, c3=0, c4=0, c5=0, c6=0, c7=0, c8=0;
+            for (let i = 0; i < 14; i++) {
+                const rem = toNormalFive(hand[i]) % 9;
+                if(rem===0) c0++; else if(rem===1) c1++; else if(rem===2) c2++;
+                else if(rem===3) c3++; else if(rem===4) c4++; else if(rem===5) c5++;
+                else if(rem===6) c6++; else if(rem===7) c7++; else if(rem===8) c8++;
+            }
+            if (c0 < 3 || c8 < 3 || c1===0 || c2===0 || c3===0 || c4===0 || c5===0 || c6===0 || c7===0) isChuuren = false;
+            if (isChuuren) yakumanMult++;
+        }
+    }
+
+    // 大四喜・小四喜
+    let windKotsu = 0;
+    for (let i = 0; i < s.mentsu.length; i++) {
+        const m = s.mentsu[i];
+        if ((m.type === 'koutsu' || m.type === 'kantsu') && m.tile >= 27 && m.tile <= 30) windKotsu++;
+    }
+    const isWindHead = s.head >= 27 && s.head <= 30;
+    if (windKotsu === 4) yakumanMult++;
+    else if (windKotsu === 3 && isWindHead) yakumanMult++;
+
+
     if (yakumanMult > 0) {
         return { score: calcPointsFast(0, 0, true, yakumanMult, state.isDealer ?? true), han: 13 * yakumanMult, fu: 0, pinfu: false };
     }
@@ -283,16 +329,21 @@ export function scoreWinningHandFast(
     if (state.isHaitei && state.isTsumo) {
         han += 1;
     }
+    if (state.isRinshan && state.isTsumo) {
+        han += 1;
+    }
 
-    // タンヤオ
+    // タンヤオ・混老頭
     let isTanyao = hand.length > 0;
+    let isHonroutou = hand.length > 0;
     for (let i = 0; i < hand.length; i++) {
         const t = toNormalFive(hand[i]);
-        if (t === 0 || t === 8 || t === 9 || t === 17 || t === 18 || t === 26 || t >= 27) {
-            isTanyao = false; break;
-        }
+        const isYao = (t === 0 || t === 8 || t === 9 || t === 17 || t === 18 || t === 26 || t >= 27);
+        if (isYao) isTanyao = false;
+        else isHonroutou = false;
     }
     if (isTanyao) han += 1;
+    if (isHonroutou) han += 2;
 
     // 一色手
     let hasHonor = false; let suitBits = 0;
@@ -334,13 +385,16 @@ export function scoreWinningHandFast(
     // ピンフ
     if (isMenzen && s.head !== -1) {
         let allShuntsu = true;
-        let nonYakuhaiHead = !(s.head === 27 || s.head === 28 || s.head === 29 || s.head === 30 ||
+        // 場風・自風・三元牌（白發中）のみ雀頭から除外。他の風牌は非役牌
+        const bk = state.bakaze ?? -1;
+        const jk = state.jikaze ?? -1;
+        const nonYakuhaiHead = !(s.head === bk || s.head === jk ||
             s.head === 31 || s.head === 32 || s.head === 33);
         for (let i = 0; i < s.mentsu.length; i++) {
             if (s.mentsu[i].type !== 'shuntsu') { allShuntsu = false; break; }
         }
         if (allShuntsu && nonYakuhaiHead && state.winningTile !== undefined) {
-            // 両面待ch判定: シュンツ終端でないこと
+            // 両面待ち判定: シュンツ終端でないこと
             let isRyanmen = false;
             for (let i = 0; i < s.mentsu.length; i++) {
                 const m = s.mentsu[i];
@@ -350,7 +404,7 @@ export function scoreWinningHandFast(
                 if (pos === 1) continue; // kanchan: skip and check other mentsu
                 let sn = m.tile;
                 if (sn >= 9 && sn <= 17) sn -= 8; else if (sn >= 18 && sn <= 26) sn -= 17; else sn += 1;
-                if ((sn === 1 && pos === 2) || (sn === 7 && pos === 0)) continue; // penchan: skip and check other mentsu
+                if ((sn === 1 && pos === 2) || (sn === 7 && pos === 0)) continue; // penchan: skip
                 isRyanmen = true; break;
             }
             if (isRyanmen) { han += 1; hasPinfu = true; }
@@ -371,14 +425,15 @@ export function scoreWinningHandFast(
     // 一盃口 / 二盃口
     if (isMenzen) {
         let pairCnt = 0;
-        // シュンツのペアをカウント（tile の値が同じシュンツが2つ）
+        const sCounts: {[key: number]: number} = {};
         for (let i = 0; i < s.mentsu.length; i++) {
-            if (s.mentsu[i].type !== 'shuntsu') continue;
-            let dup = 0;
-            for (let j = i + 1; j < s.mentsu.length; j++) {
-                if (s.mentsu[j].type === 'shuntsu' && s.mentsu[j].tile === s.mentsu[i].tile) dup++;
+            if (s.mentsu[i].type === 'shuntsu') {
+                const t = s.mentsu[i].tile;
+                sCounts[t] = (sCounts[t] || 0) + 1;
             }
-            if (dup >= 1) pairCnt++;
+        }
+        for (const t in sCounts) {
+            if (sCounts[t] >= 2) pairCnt++;
         }
         if (pairCnt >= 2) han += 3; // 二盃口
         else if (pairCnt === 1) han += 1; // 一盃口
@@ -401,6 +456,64 @@ export function scoreWinningHandFast(
 
     // 三槓子
     if (kanCount === 3) han += 2;
+
+    // 小三元
+    if (s.head >= 31 && s.head <= 33 && dragonKotsu === 2) han += 2;
+
+    // 一気通貫
+    let p1=0, p4=0, p7=0, s1=0, s4=0, s7=0;
+    for (let i = 0; i < s.mentsu.length; i++) {
+        const m = s.mentsu[i];
+        if (m.type === 'shuntsu') {
+            const t = m.tile;
+            if (t===9) p1=1; else if (t===12) p4=1; else if (t===15) p7=1;
+            else if (t===18) s1=1; else if (t===21) s4=1; else if (t===24) s7=1;
+        }
+    }
+    if ((p1 && p4 && p7) || (s1 && s4 && s7)) han += isMenzen ? 2 : 1;
+
+    // 三色同刻
+    let kotsuMapM=0, kotsuMapP=0, kotsuMapS=0;
+    for (let i = 0; i < s.mentsu.length; i++) {
+        const m = s.mentsu[i];
+        if (m.type === 'koutsu' || m.type === 'kantsu') {
+            const t = m.tile;
+            if (t <= 8) kotsuMapM |= (1 << (t % 9));
+            else if (t <= 17) kotsuMapP |= (1 << (t % 9));
+            else if (t <= 26) kotsuMapS |= (1 << (t % 9));
+        }
+    }
+    if (kotsuMapM & kotsuMapP & kotsuMapS) han += 2;
+
+    // チャンタ・ジュンチャン
+    if (!isHonroutou) {
+        let isJunchan = true;
+        let isChanta = true;
+        
+        const isYao = (t: number) => (t === 0 || t === 8 || t === 9 || t === 17 || t === 18 || t === 26 || t >= 27);
+        const isTerm = (t: number) => (t === 0 || t === 8 || t === 9 || t === 17 || t === 18 || t === 26);
+        const isHonor = (t: number) => (t >= 27);
+
+        if (!isTerm(s.head)) isJunchan = false;
+        if (!isYao(s.head)) isChanta = false;
+        
+        let hasHonorMentsu = isHonor(s.head);
+        
+        for (let i = 0; i < s.mentsu.length; i++) {
+            const m = s.mentsu[i];
+            if (m.type === 'shuntsu') {
+                const rem = m.tile % 9;
+                if (rem !== 0 && rem !== 6) { isJunchan = false; isChanta = false; break; }
+            } else {
+                if (!isTerm(m.tile)) isJunchan = false;
+                if (isHonor(m.tile)) hasHonorMentsu = true;
+                if (!isYao(m.tile)) { isChanta = false; break; }
+            }
+        }
+        
+        if (isJunchan) han += isMenzen ? 3 : 2;
+        else if (isChanta && hasHonorMentsu) han += isMenzen ? 2 : 1;
+    }
 
     // ドラ加算
     han += state.doraCount;

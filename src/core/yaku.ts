@@ -429,9 +429,9 @@ function isRyanmenWait(winningTile: Tile, structure: HandStructure): boolean {
         if (winningTile < start || winningTile > start + 2) continue;
         const pos = winningTile - start;
         const startValue = getTileNumber(start);
-        if (startValue === 1 && pos === 2) return false;
-        if (startValue === 7 && pos === 0) return false;
-        if (pos === 1) return false;
+        if (startValue === 1 && pos === 2) continue;
+        if (startValue === 7 && pos === 0) continue;
+        if (pos === 1) continue;
         return true;
     }
     return false;
@@ -556,7 +556,8 @@ function checkYaku(hand: Tile[], structure: HandStructure, state: GameState): Ya
         yaku.push({ name: "混老頭", han: 2 });
     }
 
-    if (structure.head === -1) {
+    const isChiitoiPattern = structure.mentsu.length === 6 && structure.mentsu.every(m => m.type === 'pair');
+    if (isChiitoiPattern || structure.head === -1) {
         if (isChiitoitsu(fullHand)) yaku.push({ name: '七対子', han: 2 });
         return yaku;
     }
