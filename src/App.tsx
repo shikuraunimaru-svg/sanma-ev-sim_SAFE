@@ -137,8 +137,8 @@ export default function App() {
 
   const runSimulation = () => {
     if (!workerRef.current) return;
-    if (hand.length % 3 !== 2) {
-      alert("手牌の枚数が不正です。打牌可能な枚数（2, 5, 8, 11, 14枚）にしてください。");
+    if (hand.length % 3 === 0) {
+      alert("手牌の枚数が不正です。打牌可能な枚数（2, 5, 8, 11, 14枚）またはツモ前の枚数（1, 4, 7, 10, 13枚）にしてください。");
       return;
     }
 
@@ -194,6 +194,7 @@ export default function App() {
       }
     }
 
+    console.log("UI: Sending to worker - config.myHand.length:", config.myHand.length, "config.myHand:", config.myHand, "hand.length:", hand.length);
     console.log("Posting message to worker");
     if (workerRef.current) {
       workerRef.current.postMessage({ type: 'START_SIMULATION', config });

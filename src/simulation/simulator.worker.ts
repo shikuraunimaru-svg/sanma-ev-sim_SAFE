@@ -38,8 +38,15 @@ if (typeof self !== 'undefined') {
     self.onmessage = (e: MessageEvent) => {
         try {
             const { type, config } = e.data;
+            console.log("[DEBUG] onmessage received", { handLength: config?.myHand?.length, configExists: !!config });
             if (type === 'START_SIMULATION') {
-                runBatchSimulations(config);
+                const handLength = config.myHand.length;
+                if (handLength % 3 === 1 && handLength > 1) {
+                    console.log("[DEBUG] entering evaluate13 branch");
+                    evaluate13Internal(config);
+                } else {
+                    runBatchSimulations(config);
+                }
             }
         } catch (error: any) {
             console.error("Worker Error:", error);
@@ -102,6 +109,247 @@ function buildWallTemplate(
     }
 
     return { templateMountain: new Uint8Array(baseWall), templateCounts };
+}
+
+export interface EvalSummary {
+    ev: number;
+    winRate: number;
+}
+
+export function evaluate13Internal(config: SimulationConfig): EvalSummary | void {
+    console.log("[DEBUG] entered evaluate13Internal");
+    const startTime = performance.now();
+    Engine.initShantenCache();
+    Engine.clearAgariCache();
+    Engine.resetDebugCounters();
+
+    const { myHand, fixedMentsu, myKita, otherKita, doraIndicators, currentTurn, isDealer } = config;
+
+    const visible: Tile[] = [...myHand, ...doraIndicators];
+    for (const m of fixedMentsu) visible.push(...m.tiles);
+    for (const m of config.otherOpenMelds ?? []) visible.push(...m.tiles);
+    
+    const totalKitaCount = myKita + otherKita;
+    for (let i = 0; i < totalKitaCount; i++) visible.push(Engine.TILES.z4);
+
+    const drawsConsumed = Math.max(0, (currentTurn - 1) * 3);
+    const { templateMountain, templateCounts } = buildWallTemplate(visible, drawsConsumed);
+    Engine.initWallPool(templateMountain);
+    console.log("[DEBUG] templateCounts", templateCounts);
+
+    const hand27 = new Int8Array(27);
+    for (const t of myHand) {
+        const s = toSanmaTile(toNormalFive(t));
+        if (s !== -1) hand27[s]++;
+    }
+
+    const OTHERS_HAND_TOTAL = 26;
+    const playerHandCount = config.myHand.length + config.fixedMentsu.reduce((acc, m) => acc + m.tiles.length, 0);
+    const doraIndicatorCount = config.doraIndicators.length;
+    const wallAfterVisibleRemoval = 108 - playerHandCount - doraIndicatorCount - totalKitaCount;
+    const remainingWall = wallAfterVisibleRemoval - drawsConsumed;
+    const deadWallEffectiveCount = 14 - doraIndicatorCount;
+    const liveWallLimit = remainingWall - deadWallEffectiveCount;
+    const selfEffectiveWallCount = Math.max(0, liveWallLimit - OTHERS_HAND_TOTAL);
+    const templateLen = 108 - visible.length - drawsConsumed;
+
+    const minTrials = 50;
+    const maxTrials = 200;
+    const threshold = 100;
+
+    let totalWeight = 0;
+    let sumWeightedEV = 0;
+    let sumWeightedWinRate = 0;
+
+    const workTrialCounts = new Int8Array(29);
+    const workHand27 = new Int8Array(27);
+    const workUraCounts = new Int8Array(29);
+
+    let totalSimulationSteps = 0;
+
+    const reconstructHand13 = (): Tile[] => {
+        const res: Tile[] = [];
+        for (let i = 0; i < 27; i++) {
+            for (let j = 0; j < hand27[i]; j++) {
+                res.push(Engine.toStandardTile(i));
+            }
+        }
+        return res;
+    };
+
+    const rng = new Engine.SimpleRNG(0x123456);
+
+    for (let t = 0; t < 29; t++) {
+        const count = templateCounts[t];
+        if (count <= 0) continue;
+
+        console.log("[DEBUG] processing tile", t, "count", count);
+
+        const tileType = Engine.TILE_TYPES[t];
+        if (tileType === Engine.TILES.z4) continue; // 北(z4)はスキップ
+
+        const sTile = toSanmaTile(toNormalFive(tileType));
+        if (sTile === -1) continue;
+
+        // 1. hand27 にツモ牌を加えて14枚状態を作る
+        hand27[sTile]++;
+
+        // 2. findBestDiscard27 を用いて1枚打牌を選択する
+        const bestD = Engine.findBestDiscard27(
+            hand27, 
+            fixedMentsu.length, 
+            templateCounts as any, 
+            doraIndicators, 
+            rng, 
+            0, 
+            0, 
+            currentTurn, 
+            9999
+        );
+
+        if (bestD === undefined || bestD === null) {
+            console.error("[ERROR] bestD is invalid", { hand27 });
+        }
+
+        if (bestD === -1) {
+            hand27[sTile]--;
+            continue;
+        }
+
+        // 3. hand27 からその牌を減らし、13枚状態に戻す
+        hand27[bestD]--;
+
+        // 4. runSinglePath には { type: 'discard', tile: bestD } を initialAction として渡す
+        const action: Action = { type: 'discard', tile: Engine.toStandardTile(bestD), tileInd: 0, riichi: false };
+        const stateHand = reconstructHand13();
+        const initialShanten = Engine.getShantenMemoized(hand27, fixedMentsu.length);
+
+        let sumEV2 = 0;
+        let wins = 0;
+        let n = 0;
+        let meanEV = 0;
+        let variance = 0;
+
+        for (let r = 0; r < maxTrials; r++) {
+            workHand27.fill(0); workTrialCounts.fill(0); workUraCounts.fill(0);
+            
+            const wall = Engine.wallPool[totalSimulationSteps % Engine.wallPool.length];
+            const seed = totalSimulationSteps >>> 0;
+
+            let res;
+            try {
+                res = Engine.runSinglePath(
+                    stateHand, fixedMentsu, action, myKita, otherKita, doraIndicators,
+                    currentTurn, !!isDealer, wall, templateLen, liveWallLimit, selfEffectiveWallCount,
+                    templateCounts as any, workTrialCounts, workHand27, workUraCounts,
+                    seed, initialShanten, 0, totalSimulationSteps
+                );
+            } catch (e) {
+                console.error("[ERROR] runSinglePath crashed", e);
+                throw e;
+            }
+
+            const ev = res.point;
+            n++;
+             if (n === 1) {
+                 meanEV = ev;
+                 variance = 0;
+             } else {
+                 const oldMean = meanEV;
+                 meanEV += (ev - oldMean) / n;
+                 sumEV2 += (ev - oldMean) * (ev - meanEV);
+                 variance = sumEV2 / (n - 1);
+             }
+            if (res.win) {
+                wins++;
+            }
+
+            totalSimulationSteps++;
+
+            if (n >= minTrials) {
+                const stderr = Math.sqrt(Math.max(variance, 0) / n);
+                if (stderr < threshold) {
+                    break;
+                }
+            }
+        }
+
+        const winRate = wins / n;
+
+        sumWeightedEV += meanEV * count;
+        sumWeightedWinRate += winRate * count;
+        totalWeight += count;
+
+        // 元の状態（13枚状態での元の形）に戻す：打牌を戻し、ツモ牌を削除
+        hand27[bestD]++;
+        hand27[sTile]--;
+    }
+
+    let finalEV = 0;
+    let finalWinRate = 0;
+    if (totalWeight > 0) {
+        finalEV = sumWeightedEV / totalWeight;
+        finalWinRate = sumWeightedWinRate / totalWeight;
+    }
+
+    const endTime = performance.now();
+    logDebug("evaluate13Internal finished", { ev: finalEV, winRate: finalWinRate, timeMs: endTime - startTime });
+
+    const summaryData = { ev: finalEV, winRate: finalWinRate };
+    
+    console.log("[DEBUG] evaluate13Internal finished", { finalEV, finalWinRate });
+
+    // UI側の互換性のためにモックの DiscardResult 配列を含む形で postMessage
+    const mockResult: Engine.DiscardResult = {
+        action: { type: 'tsumo' } as Action,
+        winRate: finalWinRate,
+        avgScore: finalEV, 
+        ev: finalEV,
+        evMean: finalEV,
+        ronRate: 0,
+        tenpaiRate: 0,
+        tenpaiBy10Rate: 0,
+        tenpaiWithin3Rate: 0,
+        shantenBefore: 0,
+        shantenAfter: 0,
+        trialCount: totalSimulationSteps,
+        previousMeanEV: finalEV,
+        stableCount: 0,
+        converged: true,
+        initialRemainingTiles: remainingWall,
+        initialShanten: 0,
+        totalScore: finalEV * totalSimulationSteps,
+        totalScore2: 0,
+        totalWinPoints: finalEV * totalSimulationSteps,
+        wins: Math.floor(finalWinRate * totalSimulationSteps),
+        tenpaiCount: 0,
+        avgWinPoint: finalEV,
+        layerA_totalScore: 0,
+        layerB_totalScore: 0,
+        layerA_trials: 0,
+        layerB_trials: 0,
+        stdError: 0,
+        confidence95: 0,
+        m2: 0,
+        ciLower: finalEV,
+        ciUpper: finalEV,
+        effectiveTileTypes: 0,
+        effectiveTileCount: 0,
+        reachedDiff: false,
+        totalAgariTurnSum: 0,
+        agariCount: 0,
+        averageAgariTurn: null,
+        averageAgariAfterTurns: null,
+    };
+
+    console.log("[DEBUG] posting result");
+    self.postMessage({ 
+        type: 'RESULT', 
+        results: [mockResult], 
+        summary: Engine.createSummary(config, remainingWall, endTime - startTime) 
+    });
+
+    return summaryData;
 }
 
 export function runBatchSimulations(config: SimulationConfig) {
@@ -205,7 +453,7 @@ export function runBatchSimulations(config: SimulationConfig) {
     // liveWallLimit / selfEffectiveWallCount の計算
     const TOTAL_WALL = 108;
     const DEAD_WALL_TOTAL = 14;
-    const playerHandCount = config.myHand.length + (config.fixedMentsu.length * 4);
+    const playerHandCount = config.myHand.length + config.fixedMentsu.reduce((acc, m) => acc + m.tiles.length, 0);
     const doraIndicatorCount = config.doraIndicators.length;
     const totalNukiCount = config.myKita + config.otherKita;
 
